@@ -159,14 +159,12 @@ function setUserPlano(email, plano) {
   if (idx !== -1) { users[idx].plano = plano; saveUsuarios(users); }
 }
 
-async function enviarEmailVerificacao(email, codigo) {
-  if (!EMAILJS_CONFIGURADO) return false;
-  try {
-    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
-      { to_email: email, codigo, nome: email.split("@")[0] },
-      EMAILJS_PUBLIC_KEY);
-    return true;
-  } catch { return false; }
+function enviarEmailVerificacao(email, codigo) {
+  if (!EMAILJS_CONFIGURADO) return Promise.resolve(false);
+  return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
+    { to_email: email, codigo, nome: email.split("@")[0] },
+    EMAILJS_PUBLIC_KEY
+  ).then(() => true).catch(() => false);
 }
 
 function zerarUsuario(userKey) {
@@ -629,24 +627,13 @@ function App({ userKey = "default", onLogout }) {
         </div>
         {TABS.map((t, idx) => t.sep ? (
           <div key={idx} className="navsep" style={{ fontSize: 10, color: C.sub, fontWeight: 700, letterSpacing: 1.2, padding: "14px 12px 6px" }}>{t.sep}</div>
-        ) : (() => {
-          const locked = !canAccess(t.id);
-          return (
-            <button key={t.id} className="navbtn"
-              onClick={() => locked ? setShowPlans(true) : setTab(t.id)}
-              title={locked ? `Disponível no plano Pro ou Studio` : ""}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
-                background: tab === t.id ? C.panel2 : "transparent", border: "none", borderLeft: `3px solid ${tab === t.id ? C.accent : "transparent"}`,
-                color: locked ? `${C.sub}77` : tab === t.id ? C.ink : C.sub,
-                padding: "9px 12px", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: 2 }}>
-              <span style={{ fontSize: 12, width: 16, textAlign: "center" }}>{locked ? "🔒" : t.icon}</span>{t.label}
-              {!locked && t.id === "pedidos" && (fila.aguardando.length + fila.produzir.length + fila.embalar.length) > 0 &&
-                <span style={{ marginLeft: "auto", background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{fila.aguardando.length + fila.produzir.length + fila.embalar.length}</span>}
-              {!locked && t.id === "estoque" && itensBaixos > 0 &&
-                <span style={{ marginLeft: "auto", background: C.bad, color: "#1a0808", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{itensBaixos}</span>}
-            </button>
-          );
-        })()
+        ) : (
+          <NavBtn key={t.id} t={t} active={tab === t.id} locked={!canAccess(t.id)}
+            onClick={() => canAccess(t.id) ? setTab(t.id) : setShowPlans(true)}
+            badge={t.id === "pedidos" && canAccess(t.id) ? fila.aguardando.length + fila.produzir.length + fila.embalar.length : t.id === "estoque" && canAccess(t.id) ? itensBaixos : 0}
+            badgeColor={t.id === "estoque" ? C.bad : C.accent}
+          />
+        )
         ))}
         <button onClick={() => setShowPlans(true)} style={{ width: "calc(100% - 0px)", marginTop: 16, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
           <div style={{ fontSize: 11, color: C.sub }}>Plano atual</div>
@@ -1834,6 +1821,19 @@ function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout }) {
 // ============================================================
 //  COMPONENTES BASE
 // ============================================================
+function NavBtn({ t, active, locked, onClick, badge, badgeColor }) {
+  return (
+    <button className="navbtn" onClick={onClick} title={locked ? "Disponível no plano Pro ou Studio" : ""}
+      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
+        background: active ? C.panel2 : "transparent", border: "none", borderLeft: `3px solid ${active ? C.accent : "transparent"}`,
+        color: locked ? C.sub + "66" : active ? C.ink : C.sub,
+        padding: "9px 12px", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: 2, opacity: locked ? 0.6 : 1 }}>
+      <span style={{ fontSize: 12, width: 16, textAlign: "center" }}>{locked ? "🔒" : t.icon}</span>
+      {t.label}
+      {badge > 0 && <span style={{ marginLeft: "auto", background: badgeColor, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{badge}</span>}
+    </button>
+  );
+}
 function H({ title, sub }) { return <div style={{ marginBottom: 20 }}><div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 24, letterSpacing: -0.4 }}>{title}</div><div style={{ color: C.sub, fontSize: 14 }}>{sub}</div></div>; }
 function Card({ children, title, style }) { return <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 20, ...style }}>{title && <Label>{title}</Label>}{children}</div>; }
 function Label({ children }) { return <div style={{ fontSize: 12, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>{children}</div>; }
@@ -1984,20 +1984,21 @@ function LoginScreen({ onLogin }) {
     onLogin(res.user.email);
   };
 
-  const handleCadastro = async () => {
+  const handleCadastro = () => {
     setErro("");
     if (!email.trim() || !senha || !senha2) { setErro("Preencha todos os campos."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro("Digite um e-mail válido."); return; }
     if (senha.length < 6) { setErro("A senha deve ter ao menos 6 caracteres."); return; }
     if (senha !== senha2) { setErro("As senhas não coincidem."); return; }
-    setLoading(true);
     const res = cadastrarUsuario(email.trim(), senha);
-    if (!res.ok) { setErro(res.erro); setLoading(false); return; }
-    const enviou = await enviarEmailVerificacao(res.email, res.codigo);
-    setLoading(false);
-    setPendEmail(res.email);
-    setCodigoGerado(enviou ? null : res.codigo); // se não enviou, mostra o código na tela
-    setModo("verificar");
+    if (!res.ok) { setErro(res.erro); return; }
+    setLoading(true);
+    enviarEmailVerificacao(res.email, res.codigo).then((enviou) => {
+      setLoading(false);
+      setPendEmail(res.email);
+      setCodigoGerado(enviou ? null : res.codigo);
+      setModo("verificar");
+    });
   };
 
   const handleVerificar = () => {
@@ -2008,14 +2009,15 @@ function LoginScreen({ onLogin }) {
     onLogin(pendEmail);
   };
 
-  const handleReenviar = async () => {
+  const handleReenviar = () => {
     setErro("");
     setLoading(true);
     const novoCodigo = reenviarCodigo(pendEmail);
-    const enviou = await enviarEmailVerificacao(pendEmail, novoCodigo);
-    setLoading(false);
-    setCodigoGerado(enviou ? null : novoCodigo);
-    setErro("Novo código gerado.");
+    enviarEmailVerificacao(pendEmail, novoCodigo).then((enviou) => {
+      setLoading(false);
+      setCodigoGerado(enviou ? null : novoCodigo);
+      setErro("Novo código gerado.");
+    });
   };
 
   return (
