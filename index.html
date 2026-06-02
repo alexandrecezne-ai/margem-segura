@@ -625,16 +625,19 @@ function App({ userKey = "default", onLogout }) {
           <div style={{ width: 32, height: 32, borderRadius: 9, background: `linear-gradient(135deg,${C.accent},#ff9466)`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1a1207" }}>M</div>
           <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 15, lineHeight: 1 }}>Margem<br />Segura <span style={{ color: C.accent }}>3D</span></div>
         </div>
-        {TABS.map((t, idx) => t.sep ? (
-          <div key={idx} className="navsep" style={{ fontSize: 10, color: C.sub, fontWeight: 700, letterSpacing: 1.2, padding: "14px 12px 6px" }}>{t.sep}</div>
-        ) : (
-          <NavBtn key={t.id} t={t} active={tab === t.id} locked={!canAccess(t.id)}
-            onClick={() => canAccess(t.id) ? setTab(t.id) : setShowPlans(true)}
-            badge={t.id === "pedidos" && canAccess(t.id) ? fila.aguardando.length + fila.produzir.length + fila.embalar.length : t.id === "estoque" && canAccess(t.id) ? itensBaixos : 0}
-            badgeColor={t.id === "estoque" ? C.bad : C.accent}
-          />
-        )
-        ))}
+        {TABS.map((t, idx) => {
+          if (t.sep) return <div key={idx} className="navsep" style={{ fontSize: 10, color: C.sub, fontWeight: 700, letterSpacing: 1.2, padding: "14px 12px 6px" }}>{t.sep}</div>;
+          const locked = !canAccess(t.id);
+          let badge = 0;
+          if (!locked && t.id === "pedidos") badge = fila.aguardando.length + fila.produzir.length + fila.embalar.length;
+          if (!locked && t.id === "estoque") badge = itensBaixos;
+          return (
+            <NavBtn key={t.id} t={t} active={tab === t.id} locked={locked}
+              onClick={() => locked ? setShowPlans(true) : setTab(t.id)}
+              badge={badge} badgeColor={t.id === "estoque" ? C.bad : C.accent}
+            />
+          );
+        })}
         <button onClick={() => setShowPlans(true)} style={{ width: "calc(100% - 0px)", marginTop: 16, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
           <div style={{ fontSize: 11, color: C.sub }}>Plano atual</div>
           <div style={{ fontWeight: 700, color: C.accent, fontFamily: "Sora" }}>{plan} <span style={{ fontSize: 11, color: C.sub, fontWeight: 400 }}>· gerenciar</span></div>
