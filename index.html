@@ -86,6 +86,9 @@ const PEDIDOS_SEED  = [];
 // Modelo padrão de condições comerciais (editável)
 const COND_SEED = { sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; sinal para iniciar a produção", empresa: "", contatoEmpresa: "" };
 
+// Administrador
+const ADMIN_EMAIL = "alexandre.cezne@gmail.com";
+
 // Acesso por plano
 const PLAN_ACCESS = {
   Free:   ["dashboard", "calc", "academia"],
@@ -165,6 +168,29 @@ function enviarEmailVerificacao(email, codigo) {
     { to_email: email, codigo, nome: email.split("@")[0] },
     EMAILJS_PUBLIC_KEY
   ).then(() => true).catch(() => false);
+}
+
+function isAdmin(email) { return email && email.toLowerCase() === ADMIN_EMAIL.toLowerCase(); }
+
+function adminDeletarUsuario(email) {
+  const users = getUsuarios().filter((u) => u.email !== email.toLowerCase());
+  saveUsuarios(users);
+  // limpa dados do usuário
+  zerarUsuario(emailParaKey(email));
+}
+
+function adminResetarSenha(email) {
+  const users = getUsuarios();
+  const idx = users.findIndex((u) => u.email === email.toLowerCase());
+  if (idx === -1) return null;
+  const nova = Math.random().toString(36).slice(-8);
+  users[idx] = { ...users[idx], senha: nova };
+  saveUsuarios(users);
+  return nova;
+}
+
+function adminAlterarPlano(email, plano) {
+  setUserPlano(email, plano);
 }
 
 function zerarUsuario(userKey) {
@@ -416,8 +442,12 @@ function App({ userKey = "default", onLogout }) {
 
   const [tab, setTab] = React.useState("dashboard");
   const [plan, setPlan] = React.useState(() => getUserPlano(userKey) || LS("plan", "Free"));
+  const adminMode = React.useMemo(() => {
+    const u = getUsuarios().find((x) => emailParaKey(x.email) === userKey);
+    return u ? isAdmin(u.email) : false;
+  }, [userKey]);
   const acessos = PLAN_ACCESS[plan] || PLAN_ACCESS["Free"];
-  const canAccess = (tabId) => acessos.includes(tabId);
+  const canAccess = (tabId) => tabId === "admin" ? adminMode : acessos.includes(tabId);
   const [showPlans, setShowPlans] = React.useState(false);
 
   const [produtos, setProdutos] = React.useState(() => LS("produtos", PRODUTOS_SEED));
@@ -605,6 +635,7 @@ function App({ userKey = "default", onLogout }) {
     { id: "roas", label: "ROAS", icon: "📣" },
     { id: "kits", label: "Kitficação", icon: "▣" },
     { id: "academia", label: "Academia", icon: "🎓" },
+    ...(adminMode ? [{ sep: "ADMIN" }, { id: "admin", label: "Painel Admin", icon: "🛡" }] : []),
   ];
 
   // métricas de fluxo p/ badges e dashboard
@@ -642,7 +673,8 @@ function App({ userKey = "default", onLogout }) {
           <div style={{ fontSize: 11, color: C.sub }}>Plano atual</div>
           <div style={{ fontWeight: 700, color: C.accent, fontFamily: "Sora" }}>{plan} <span style={{ fontSize: 11, color: C.sub, fontWeight: 400 }}>· gerenciar</span></div>
         </button>
-        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 11, color: C.sub, wordBreak: "break-all" }}>
+        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${adminMode ? C.accent : C.line}`, borderRadius: 10, fontSize: 11, color: C.sub, wordBreak: "break-all" }}>
+          {adminMode && <div style={{ fontSize: 10, fontWeight: 800, color: C.accent, marginBottom: 3, letterSpacing: 1 }}>🛡 ADMINISTRADOR</div>}
           <span style={{ fontWeight: 600, color: C.ink }}>👤 {userKey}</span>
         </div>
         {onLogout && (
@@ -665,6 +697,7 @@ function App({ userKey = "default", onLogout }) {
         {tab === "roas" && <Roas r={r} />}
         {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} />}
         {tab === "academia" && <Academia go={setTab} plan={plan} />}
+        {tab === "admin" && adminMode && <AdminPanel />}
       </main>
 
       {showPlans && <PlansModal plan={plan} setPlan={setPlan} close={() => setShowPlans(false)} resetDados={resetDados} userKey={userKey} onLogout={onLogout} />}
@@ -1824,6 +1857,125 @@ function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout }) {
 // ============================================================
 //  COMPONENTES BASE
 // ============================================================
+// ---------- PAINEL ADMIN ----------
+function AdminPanel() {
+  const [users, setUsers] = React.useState(getUsuarios());
+  const [senhaReset, setSenhaReset] = React.useState(null); // { email, senha }
+  const [confirm, setConfirm] = React.useState(null); // { email, acao }
+  const planos = ["Free", "Pro", "Studio"];
+
+  const refresh = () => setUsers(getUsuarios());
+
+  const handleAlterarPlano = (email, plano) => {
+    adminAlterarPlano(email, plano);
+    refresh();
+  };
+
+  const handleDeletar = (email) => {
+    setConfirm({ email, acao: "deletar" });
+  };
+
+  const handleResetar = (email) => {
+    setConfirm({ email, acao: "resetar" });
+  };
+
+  const confirmarAcao = () => {
+    if (!confirm) return;
+    if (confirm.acao === "deletar") {
+      adminDeletarUsuario(confirm.email);
+      refresh();
+      setConfirm(null);
+    } else if (confirm.acao === "resetar") {
+      const nova = adminResetarSenha(confirm.email);
+      setSenhaReset({ email: confirm.email, senha: nova });
+      setConfirm(null);
+    }
+  };
+
+  return (
+    <div>
+      <H title="Painel Administrativo" sub={`Gestão de usuários · ${users.length} conta(s) cadastrada(s)`} />
+
+      {senhaReset && (
+        <div style={{ background: C.panel, border: `1px solid ${C.good}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, color: C.good, marginBottom: 6 }}>✓ Senha redefinida</div>
+          <div style={{ fontSize: 13, color: C.sub }}>Nova senha temporária para <b style={{ color: C.ink }}>{senhaReset.email}</b>:</div>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22, color: C.accent, letterSpacing: 2, margin: "8px 0" }}>{senhaReset.senha}</div>
+          <div style={{ fontSize: 11, color: C.sub }}>Envie esta senha ao usuário. Ele poderá alterá-la após o login.</div>
+          <button onClick={() => setSenhaReset(null)} style={{ marginTop: 10, background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Fechar</button>
+        </div>
+      )}
+
+      {confirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+          <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 16, padding: 28, maxWidth: 380, width: "100%", margin: 20 }}>
+            <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 16, marginBottom: 10 }}>
+              {confirm.acao === "deletar" ? "🗑 Deletar usuário" : "🔑 Redefinir senha"}
+            </div>
+            <div style={{ fontSize: 13, color: C.sub, marginBottom: 20 }}>
+              {confirm.acao === "deletar"
+                ? <>Tem certeza que deseja <b style={{ color: C.bad }}>deletar permanentemente</b> a conta de <b style={{ color: C.ink }}>{confirm.email}</b>? Todos os dados serão apagados.</>
+                : <>Redefinir a senha de <b style={{ color: C.ink }}>{confirm.email}</b>? Uma senha temporária será gerada.</>}
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setConfirm(null)} style={{ flex: 1, background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancelar</button>
+              <button onClick={confirmarAcao} style={{ flex: 1, background: confirm.acao === "deletar" ? C.bad : C.accent, border: "none", color: "#1a1207", padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                {confirm.acao === "deletar" ? "Deletar" : "Redefinir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 1.5fr", padding: "10px 16px", borderBottom: `1px solid ${C.line}`, fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
+          <span>E-mail</span><span>Plano</span><span>Status</span><span>Cadastro</span><span style={{ textAlign: "right" }}>Ações</span>
+        </div>
+        {users.length === 0 && (
+          <div style={{ padding: 24, textAlign: "center", color: C.sub, fontSize: 14 }}>Nenhum usuário cadastrado.</div>
+        )}
+        {users.map((u) => (
+          <div key={u.email} style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 1.5fr", padding: "12px 16px", borderBottom: `1px solid ${C.line}`, alignItems: "center", fontSize: 13 }}>
+            <div style={{ wordBreak: "break-all" }}>
+              {isAdmin(u.email) && <span style={{ fontSize: 10, fontWeight: 800, color: C.accent, background: `${C.accent}22`, padding: "1px 6px", borderRadius: 6, marginRight: 6 }}>ADMIN</span>}
+              {u.email}
+            </div>
+            <div>
+              <select value={u.plano || "Free"} onChange={(e) => handleAlterarPlano(u.email, e.target.value)}
+                disabled={isAdmin(u.email)}
+                style={{ background: C.panel2, border: `1px solid ${C.line}`, color: C.ink, padding: "4px 8px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", cursor: isAdmin(u.email) ? "not-allowed" : "pointer" }}>
+                {planos.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              {u.verificado
+                ? <span style={{ color: C.good, fontSize: 12, fontWeight: 700 }}>✓ Ativo</span>
+                : <span style={{ color: C.warn, fontSize: 12, fontWeight: 700 }}>⏳ Pendente</span>}
+            </div>
+            <div style={{ color: C.sub, fontSize: 12 }}>{u.criadoEm || "—"}</div>
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+              {!isAdmin(u.email) && (<>
+                <button onClick={() => handleResetar(u.email)}
+                  style={{ background: C.panel2, border: `1px solid ${C.line}`, color: C.ink, padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  🔑 Senha
+                </button>
+                <button onClick={() => handleDeletar(u.email)}
+                  style={{ background: "transparent", border: `1px solid ${C.bad}`, color: C.bad, padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  🗑
+                </button>
+              </>)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 16, padding: "12px 16px", background: C.panel2, borderRadius: 10, fontSize: 12, color: C.sub }}>
+        💡 Alterações de plano têm efeito imediato. O usuário verá o novo acesso no próximo login ou ao recarregar a página.
+      </div>
+    </div>
+  );
+}
+
 function NavBtn({ t, active, locked, onClick, badge, badgeColor }) {
   return (
     <button className="navbtn" onClick={onClick} title={locked ? "Disponível no plano Pro ou Studio" : ""}
