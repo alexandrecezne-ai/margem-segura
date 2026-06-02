@@ -1,0 +1,1990 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#0e1014" />
+<title>Margem Segura 3D — ERP</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+<style>html,body{margin:0;padding:0;background:#0e1014;}#root{min-height:100vh;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+// ===================== CONSTANTES E DADOS =====================
+const C = { bg: "#0e1014", panel: "#171a21", panel2: "#1e222b", line: "#2a2f3a",
+  ink: "#e9edf2", sub: "#8f99a8", accent: "#ff6b35", accent2: "#2dd4bf",
+  good: "#34d399", warn: "#fbbf24", bad: "#f87171", blue: "#60a5fa", purple: "#a78bfa", pink: "#f472b6" };
+
+const IMPRESSORAS = [
+  { modelo: "Ender-3 V3 SE", kw: 0.1 }, { modelo: "Ender-3 / V2 / S1", kw: 0.125 },
+  { modelo: "Ender-3 V3 / V3 KE", kw: 0.135 }, { modelo: "Anycubic Kobra 2 Neo", kw: 0.14 },
+  { modelo: "Elegoo Neptune 4 / Pro", kw: 0.16 }, { modelo: "Sovol SV06", kw: 0.13 },
+  { modelo: "Bambu A1 mini", kw: 0.1 }, { modelo: "Bambu A1", kw: 0.1 },
+  { modelo: "Bambu P1S / P1P", kw: 0.13 }, { modelo: "Creality K1 / K1C", kw: 0.15 },
+  { modelo: "Creality K1 Max", kw: 0.25 }, { modelo: "Prusa MK4S", kw: 0.12 },
+  { modelo: "Elegoo Mars 4 (resina)", kw: 0.06 }, { modelo: "Elegoo Saturn 4 Ultra (resina)", kw: 0.08 },
+  { modelo: "Genérico FDM 220x220", kw: 0.13 }, { modelo: "Genérico FDM 300x300", kw: 0.18 },
+];
+const PERFIS_MANUT = [
+  { perfil: "FDM Entrada Bowden", manutHora: 0.1, vidaUtil: 3500 },
+  { perfil: "FDM Entrada Direct Drive", manutHora: 0.12, vidaUtil: 4000 },
+  { perfil: "FDM Intermediária 220-250", manutHora: 0.15, vidaUtil: 5000 },
+  { perfil: "FDM CoreXY Alta Velocidade", manutHora: 0.24, vidaUtil: 6000 },
+  { perfil: "FDM Grande Formato", manutHora: 0.3, vidaUtil: 5000 },
+  { perfil: "Resina Compacta LCD", manutHora: 0.2, vidaUtil: 4000 },
+  { perfil: "Resina Média/Grande LCD", manutHora: 0.32, vidaUtil: 4000 },
+  { perfil: "Perfil Manual", manutHora: 0.15, vidaUtil: 5000 },
+];
+const CANAIS = [
+  { nome: "Venda direta", comissao: 0, pgto: 0.04, tarifa: 0, ads: 0.12, frete: 0, seg: 0.03 },
+  { nome: "Mercado Livre", comissao: 0.16, pgto: 0, tarifa: 3, ads: 0.1, frete: 0, seg: 0.03 },
+  { nome: "Shopee", comissao: 0.2, pgto: 0, tarifa: 4, ads: 0.08, frete: 0, seg: 0.03 },
+  { nome: "Amazon", comissao: 0.15, pgto: 0, tarifa: 2, ads: 0.1, frete: 0, seg: 0.03 },
+  { nome: "Magalu", comissao: 0.18, pgto: 0, tarifa: 0, ads: 0.08, frete: 0, seg: 0.03 },
+];
+// Regimes de imposto (taxa padrão sugerida — editável)
+const IMPOSTOS = [
+  { regime: "Isento / não aplicar", taxa: 0 },
+  { regime: "MEI (fixo, ~0% s/ venda)", taxa: 0 },
+  { regime: "Simples Nacional", taxa: 0.06 },
+  { regime: "Lucro Presumido", taxa: 0.115 },
+  { regime: "Personalizado", taxa: 0.06 },
+];
+const CFG = { horaOperacional: 25, tarifaEnergia: 0.9, lucroAlvoRS: 15, lucroLiquidoAds: 0.12, markupPremium: 0.15 };
+
+// Tipos de material (custo médio de referência R$/g)
+const MATERIAIS = [
+  { tipo: "PLA", refUn: 0.10 },
+  { tipo: "PETG", refUn: 0.125 },
+  { tipo: "TPU", refUn: 0.18 },
+  { tipo: "ABS", refUn: 0.11 },
+  { tipo: "ASA", refUn: 0.15 },
+  { tipo: "Resina padrão", refUn: 0.14 },
+  { tipo: "Resina ABS-like", refUn: 0.16 },
+];
+
+// Cadastro de máquinas (alimenta precificação E produção/capacidade)
+const MAQUINAS_SEED = [
+  { id: "MAQ-1", nome: "Ender-3 V3 SE", tipo: "FDM", potenciaKw: 0.10, valor: 1300, vidaUtilH: 4000, manutHora: 0.12, tarifaEnergia: 0.90, horasDia: 16, diasMes: 22, eficiencia: 0.82 },
+  { id: "MAQ-2", nome: "Bambu Lab A1", tipo: "FDM", potenciaKw: 0.10, valor: 2900, vidaUtilH: 5000, manutHora: 0.18, tarifaEnergia: 0.90, horasDia: 18, diasMes: 22, eficiencia: 0.88 },
+  { id: "MAQ-3", nome: "Elegoo Saturn 4 Ultra", tipo: "Resina", potenciaKw: 0.08, valor: 3200, vidaUtilH: 4000, manutHora: 0.32, tarifaEnergia: 0.90, horasDia: 12, diasMes: 22, eficiencia: 0.78 },
+];
+
+// Seeds de demonstração
+const PRODUTOS_SEED = [
+  { sku: "SUP-HEAD-001", nome: "Suporte de headset", canal: "Mercado Livre", custo: 27.4, precoMin: 44.5, precoSaudavel: 62.13, precoPremium: 71.45, precoPraticado: 62.13, margem: 24, estoquePronto: 3, horasImpressao: 7, insumoId: "FIL-PLA-PRETO", consumoUn: 90, matTipo: "PLA", cores: [{cor:"Preto",peso:80},{cor:"Branco",peso:85}], impostoTaxa: 0.06, usarAds: true, usarSeg: true },
+  { sku: "ORG-CAB-002", nome: "Organizador de cabos", canal: "Shopee", custo: 9.8, precoMin: 16.2, precoSaudavel: 27.5, precoPremium: 31.6, precoPraticado: 27.5, margem: 31, estoquePronto: 0, horasImpressao: 2.5, insumoId: "FIL-PETG-BRANCO", consumoUn: 45, matTipo: "PETG", cores: [], impostoTaxa: 0.06, usarAds: true, usarSeg: true },
+];
+const INSUMOS_SEED = [
+  { id: "FIL-PLA-PRETO", cat: "Filamento", material: "PLA", cor: "Preto", nome: "PLA Preto 1kg", un: "g", custoUn: 0.1, estoque: 750, min: 200, consumoDia: 90 },
+  { id: "FIL-PLA-BRANCO", cat: "Filamento", material: "PLA", cor: "Branco", nome: "PLA Branco 1kg", un: "g", custoUn: 0.11, estoque: 600, min: 200, consumoDia: 70 },
+  { id: "FIL-PLA-VERMELHO", cat: "Filamento", material: "PLA", cor: "Vermelho", nome: "PLA Vermelho 1kg", un: "g", custoUn: 0.12, estoque: 320, min: 150, consumoDia: 30 },
+  { id: "FIL-PETG-BRANCO", cat: "Filamento", material: "PETG", cor: "Branco", nome: "PETG Branco 1kg", un: "g", custoUn: 0.125, estoque: 180, min: 200, consumoDia: 40 },
+  { id: "FIL-PETG-PRETO", cat: "Filamento", material: "PETG", cor: "Preto", nome: "PETG Preto 1kg", un: "g", custoUn: 0.13, estoque: 250, min: 200, consumoDia: 35 },
+  { id: "FIL-TPU-PRETO", cat: "Filamento", material: "TPU", cor: "Preto", nome: "TPU Preto 1kg", un: "g", custoUn: 0.18, estoque: 300, min: 150, consumoDia: 20 },
+  { id: "RES-ABS-CINZA", cat: "Resina", material: "Resina ABS-like", cor: "Cinza", nome: "Resina ABS-like Cinza", un: "ml", custoUn: 0.14, estoque: 900, min: 250, consumoDia: 50 },
+  { id: "ACE-ARGOLA", cat: "Acessório", nome: "Argola de chaveiro", un: "un", custoUn: 0.25, estoque: 500, min: 100, consumoDia: 15 },
+  { id: "ACE-RABICHO", cat: "Acessório", nome: "Rabicho de luminária", un: "un", custoUn: 3.5, estoque: 60, min: 20, consumoDia: 3 },
+  { id: "EMB-CAIXA-P", cat: "Embalagem", nome: "Caixa P", un: "un", custoUn: 2.5, estoque: 40, min: 30, consumoDia: 6 },
+  { id: "EMB-SACO-BOLHA", cat: "Embalagem", nome: "Saco bolha", un: "un", custoUn: 0.4, estoque: 200, min: 50, consumoDia: 10 },
+];
+const ORC_SEED = [
+  { id: "ORC-1001", cliente: "Loja Geek", contato: "", itens: [{ sku: "SUP-HEAD-001", nome: "Suporte de headset", qtd: 10, cor: "Preto", preco: 62.13 }], total: 621.3, status: "Enviado", data: "20/05",
+    sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; 50% de sinal para iniciar a produção" },
+];
+const PEDIDOS_SEED = [
+  { id: "P-0001", cliente: "Cliente A", canal: "Mercado Livre", origem: "Mercado Livre", prioridade: "Alta", etapa: "Embalar", data: "22/05",
+    itens: [{ sku: "SUP-HEAD-001", produto: "Suporte de headset", qtd: 2, cor: "Preto", preco: 62.13, insumoId: "FIL-PLA-PRETO", necessario: 180 }] },
+  { id: "P-0002", cliente: "Cliente B", canal: "Venda direta", origem: "Orçamento ORC-1000", prioridade: "Normal", etapa: "Produzir", data: "24/05",
+    itens: [{ sku: "ORG-CAB-002", produto: "Organizador de cabos", qtd: 5, cor: "Branco", preco: 27.5, insumoId: "FIL-PETG-BRANCO", necessario: 225 }] },
+  { id: "P-0003", cliente: "Cliente C", canal: "Shopee", origem: "Shopee", prioridade: "Urgente", etapa: "Aguardando insumo", data: "21/05",
+    itens: [{ sku: "ORG-CAB-002", produto: "Organizador de cabos", qtd: 10, cor: "Branco", preco: 27.5, insumoId: "FIL-PETG-BRANCO", necessario: 450 }] },
+];
+// Modelo padrão de condições comerciais (editável)
+const COND_SEED = { sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; sinal para iniciar a produção", empresa: "Sua Marca 3D", contatoEmpresa: "" };
+
+// Helpers
+const brl = (n) => (isFinite(n) ? n : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const pct = (n) => `${((isFinite(n) ? n : 0) * 100).toFixed(1)}%`;
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const hoje = () => new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+
+// ===================== GESTÃO DE USUÁRIOS =====================
+function getUsuarios() { try { return JSON.parse(localStorage.getItem("ms3d_users") || "[]"); } catch { return []; } }
+function saveUsuarios(list) { localStorage.setItem("ms3d_users", JSON.stringify(list)); }
+function loginUsuario(username, senha) {
+  const users = getUsuarios();
+  return users.find((u) => u.username === username && u.senha === senha) || null;
+}
+function cadastrarUsuario(username, senha) {
+  const users = getUsuarios();
+  if (users.find((u) => u.username === username)) return false;
+  users.push({ username, senha, criadoEm: new Date().toLocaleDateString("pt-BR") });
+  saveUsuarios(users);
+  return true;
+}
+function zerarUsuario(userKey) {
+  const PFX = `ms3d_${userKey}_`;
+  ["produtos","insumos","maquinas","orcamentos","pedidos","cond","plan","version"].forEach((k) => localStorage.removeItem(PFX + k));
+}
+
+// monta o texto do orçamento (compartilhado por WhatsApp e PDF)
+function textoOrcamento(o, cond) {
+  const linhas = (o.itens || []).map((it) => `• ${it.qtd}x ${it.nome}${it.cor ? " (" + it.cor + ")" : ""} — ${brl(it.preco)} un = ${brl(it.preco * it.qtd)}`);
+  const total = (o.itens || []).reduce((a, it) => a + it.preco * it.qtd, 0);
+  return { linhas, total };
+}
+function enviarWhats(o, cond) {
+  const { linhas, total } = textoOrcamento(o, cond);
+  const empresa = (cond && cond.empresa) || "";
+  const partes = [];
+  if (empresa) partes.push(`*${empresa}*`);
+  partes.push(`*Orçamento ${o.id}*`);
+  if (o.cliente) partes.push(`Cliente: ${o.cliente}`);
+  partes.push("", ...linhas, "", `*Total: ${brl(total)}*`, "");
+  partes.push(`Sinal: ${o.sinal || 0}% para iniciar a produção`);
+  partes.push(`Pagamento: ${o.pagamento || ""}`);
+  partes.push(`Produção: ${o.prazoProducao || ""}`);
+  partes.push(`Entrega: ${o.prazoEntrega || ""}`);
+  partes.push(`Validade: ${o.validade || ""}`);
+  if (cond && cond.contatoEmpresa) partes.push("", `Contato: ${cond.contatoEmpresa}`);
+  const texto = encodeURIComponent(partes.join("\n"));
+  const fone = (o.contato || "").replace(/\D/g, "");
+  const url = fone ? `https://wa.me/55${fone}?text=${texto}` : `https://wa.me/?text=${texto}`;
+  window.open(url, "_blank");
+}
+function exportarPDF(o, cond) {
+  const { linhas, total } = textoOrcamento(o, cond);
+  const empresa = (cond && cond.empresa) || "Orçamento";
+  const itensHtml = (o.itens || []).map((it) => `<tr><td>${it.qtd}</td><td>${it.nome}${it.cor ? " <span style='color:#777'>(" + it.cor + ")</span>" : ""}</td><td style="text-align:right">${brl(it.preco)}</td><td style="text-align:right">${brl(it.preco * it.qtd)}</td></tr>`).join("");
+  const sinalRS = total * ((o.sinal || 0) / 100);
+  const win = window.open("", "_blank");
+  if (!win) { alert("Permita pop-ups para gerar o PDF."); return; }
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${o.id}</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;max-width:720px;margin:32px auto;padding:0 24px;}
+    h1{font-size:22px;margin:0;} .sub{color:#666;font-size:13px;margin-top:2px;}
+    .head{display:flex;justify-content:space-between;border-bottom:2px solid #ff6b35;padding-bottom:12px;margin-bottom:20px;}
+    table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
+    th{text-align:left;color:#666;font-size:12px;text-transform:uppercase;border-bottom:1px solid #ddd;padding:8px 4px;}
+    td{padding:8px 4px;border-bottom:1px solid #eee;}
+    .total{text-align:right;font-size:18px;font-weight:bold;margin-top:8px;}
+    .cond{background:#f6f6f6;border-radius:10px;padding:16px;margin-top:20px;font-size:13px;line-height:1.7;}
+    .cond b{color:#000;} .foot{color:#999;font-size:11px;margin-top:24px;text-align:center;}
+    @media print{button{display:none;}}
+    button{background:#ff6b35;color:#fff;border:none;padding:10px 18px;border-radius:8px;font-size:14px;cursor:pointer;margin-top:20px;}
+  </style></head><body>
+  <div class="head"><div><h1>${empresa}</h1><div class="sub">Orçamento ${o.id} · ${o.data || ""}</div></div>
+  <div style="text-align:right;font-size:13px;color:#666">${o.cliente ? "Cliente:<br><b style='color:#000'>" + o.cliente + "</b>" : ""}</div></div>
+  <table><thead><tr><th>Qtd</th><th>Produto</th><th style="text-align:right">Preço un.</th><th style="text-align:right">Subtotal</th></tr></thead>
+  <tbody>${itensHtml}</tbody></table>
+  <div class="total">Total: ${brl(total)}</div>
+  <div class="cond">
+    <div><b>Sinal:</b> ${o.sinal || 0}% (${brl(sinalRS)}) para iniciar a produção</div>
+    <div><b>Forma de pagamento:</b> ${o.pagamento || "—"}</div>
+    <div><b>Prazo de produção:</b> ${o.prazoProducao || "—"}</div>
+    <div><b>Prazo de entrega:</b> ${o.prazoEntrega || "—"}</div>
+    <div><b>Validade da proposta:</b> ${o.validade || "—"}</div>
+    ${cond && cond.contatoEmpresa ? `<div><b>Contato:</b> ${cond.contatoEmpresa}</div>` : ""}
+  </div>
+  <button onclick="window.print()">Imprimir / Salvar PDF</button>
+  <div class="foot">Gerado por Margem Segura 3D</div>
+  </body></html>`);
+  win.document.close();
+}
+
+function calcular(input, ctx) {
+  ctx = ctx || {};
+  const insumos = ctx.insumos || [];
+  const maquinas = ctx.maquinas || [];
+
+  // ---- 2. MATERIAL ----
+  // fonte: 'estoque' (custo médio do TIPO de material no estoque) | 'manual' (custoMaterial)
+  let custoMatUn;
+  if (input.matFonte === "estoque") {
+    custoMatUn = custoMedioMaterial(insumos, input.matTipo);
+    if (!custoMatUn) custoMatUn = input.custoMaterial || 0; // fallback se não há esse tipo no estoque
+  } else {
+    custoMatUn = input.custoMaterial || 0;
+  }
+  // peso da peça: se cadastrou peso por cor, usa a SOMA dos pesos das cores
+  const pesoCores = (input.coresAtivo && input.cores && input.cores.length)
+    ? input.cores.reduce((a, c) => a + (Number(c.peso) || 0), 0) : null;
+  const pesoPeca = pesoCores != null ? pesoCores : (input.consumo || 0);
+  const custoMaterial = custoMatUn * (pesoPeca + (input.perdas || 0));
+
+  // ---- 3. OPERACIONAL (energia + depreciação + manutenção) ----
+  // modo: 'maquina' (máquina específica) | 'medio' (média do custo/hora de todas) | 'manual'
+  let custoOperacional = 0;
+  const h = input.horasImpressao || 0;
+  if (input.opMode === "manual") {
+    custoOperacional = input.opManual || 0;
+  } else if (input.opMode === "maquina" && input.maquinaId && maquinas.find((x) => x.id === input.maquinaId)) {
+    const m = maquinas.find((x) => x.id === input.maquinaId);
+    custoOperacional = custoHoraMaquina(m) * h;
+  } else if (maquinas.length) {
+    // médio = média do custo/hora de cada máquina (não soma, não média de parâmetros)
+    const mediaCustoHora = avg(maquinas.map((x) => custoHoraMaquina(x)));
+    custoOperacional = mediaCustoHora * h;
+  }
+
+  // ---- 4. MÃO DE OBRA ----
+  // modo: 'tempo' | 'manual' | 'nao'
+  let custoMaoObra = 0;
+  if (input.moMode === "tempo") {
+    const min = (input.setup || 0) + (input.retirada || 0) + (input.acabamento || 0) + (input.embalagemMin || 0);
+    custoMaoObra = (min / 60) * (input.moHora || CFG.horaOperacional);
+  } else if (input.moMode === "manual") {
+    custoMaoObra = input.moManual || 0;
+  }
+
+  // ---- 5. ACESSÓRIOS ----
+  // lista [{fonte:'estoque'|'manual', insumoId, qtd, custoManual}]
+  let custoAcessorios = 0;
+  (input.acessorios || []).forEach((a) => {
+    if (a.fonte === "estoque" && a.insumoId) {
+      const ins = insumos.find((i) => i.id === a.insumoId);
+      custoAcessorios += (ins ? ins.custoUn : 0) * (a.qtd || 1);
+    } else {
+      custoAcessorios += (a.custoManual || 0) * (a.qtd || 1);
+    }
+  });
+
+  // ---- 6. DESPACHO ----
+  // lista [{fonte, insumoId, qtd, custoManual}] + brinde manual
+  let custoDespacho = 0;
+  (input.despacho || []).forEach((d) => {
+    if (d.fonte === "estoque" && d.insumoId) {
+      const ins = insumos.find((i) => i.id === d.insumoId);
+      custoDespacho += (ins ? ins.custoUn : 0) * (d.qtd || 1);
+    } else {
+      custoDespacho += (d.custoManual || 0) * (d.qtd || 1);
+    }
+  });
+  const brinde = input.brindeAtivo ? (input.brindeValor || 0) : 0;
+  custoDespacho += brinde;
+
+  // ---- CUSTO DE PRODUÇÃO (saída da etapa, independente de canal) ----
+  const taxaFalhas = input.taxaFalhas || 0;
+  const custoProducao = (custoMaterial + custoOperacional + custoMaoObra + custoAcessorios) * (1 + taxaFalhas);
+  const custoLogistico = custoDespacho; // despacho = logística da peça
+  const custoTotalPeca = custoProducao + custoLogistico;
+
+  // ---- IMPOSTO (regime selecionado) ----
+  const taxaImposto = input.impostoTaxa != null ? input.impostoTaxa : 0.06;
+  // toggles: considerar ou não Ads/Marketing e Reserva de segurança
+  const usarAds = input.usarAds !== false;
+  const usarSeg = input.usarSeg !== false;
+
+  // ---- PREÇOS POR CANAL ----
+  const cenarios = CANAIS.map((c) => precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg));
+  const canalRef = input.canalRef || "Mercado Livre";
+  const ref = cenarios.find((x) => x.nome === canalRef) || cenarios[0];
+  const canal = CANAIS.find((c) => c.nome === canalRef) || CANAIS[1];
+  const totalPct = ref.totalPct, baseMaisTarifa = ref.baseMaisTarifa;
+  const precoMinimo = ref.precoMinimo, precoSaudavel = ref.precoSaudavel, precoPremium = ref.precoPremium;
+  const adsPct = usarAds ? canal.ads : 0;
+  const segPct = usarSeg ? canal.seg : 0;
+
+  // preço que será praticado (definido pelo usuário no resumo)
+  const precoPraticado = input.precoPraticado || precoSaudavel;
+  const lucroPraticado = precoPraticado - baseMaisTarifa - precoPraticado * totalPct;
+  const margemAtual = precoPraticado ? lucroPraticado / precoPraticado : 0;
+  let status = "Inviável";
+  if (precoPraticado >= precoSaudavel) status = "Saudável";
+  else if (precoPraticado >= precoMinimo) status = "Apertado";
+
+  // ---- DISTRIBUIÇÃO DO PREÇO PRATICADO (anatomia do preço) ----
+  const distrib = {
+    custoProducaoPeca: custoProducao,
+    despacho: custoLogistico,
+    tarifaFixa: canal.tarifa + canal.frete,
+    comissao: precoPraticado * canal.comissao,
+    pagamento: precoPraticado * canal.pgto,
+    ads: precoPraticado * adsPct,
+    imposto: precoPraticado * taxaImposto,
+    seguranca: precoPraticado * segPct,
+    lucro: lucroPraticado,
+    usarAds, usarSeg,
+  };
+
+  // ROAS (sobre o canal de referência, no preço praticado)
+  const pctSemAds = canal.comissao + canal.pgto + taxaImposto + segPct;
+  const custoSemAdsRS = baseMaisTarifa + precoPraticado * pctSemAds;
+  const margemAntesAds = (precoPraticado - custoSemAdsRS) / precoPraticado;
+  const acosMax = Math.max(0, margemAntesAds - CFG.lucroLiquidoAds);
+  const roasMeta = acosMax > 0 ? 1 / acosMax : 0;
+  const investMaxVenda = precoPraticado * acosMax;
+
+  return { canal, canalRef, cenarios, taxaImposto, usarAds, usarSeg, distrib, custoMatUn, pesoPeca, custoMaterial, custoOperacional, custoMaoObra, custoAcessorios, custoDespacho, brinde,
+    custoProducao, custoLogistico, custoTotalPeca, totalPct, baseMaisTarifa,
+    precoMinimo, precoSaudavel, precoPremium, precoPraticado, lucroPraticado, lucroAtual: lucroPraticado, margemAtual, status,
+    margemAntesAds, acosMax, roasMeta, investMaxVenda,
+    custoEnergia: custoOperacional, custoMaquinaPeca: 0 };
+}
+function precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg) {
+  const ads = usarAds === false ? 0 : c.ads;
+  const seg = usarSeg === false ? 0 : c.seg;
+  const totalPct = c.comissao + c.pgto + ads + (taxaImposto || 0) + seg;
+  const baseMaisTarifa = custoTotalPeca + c.frete + c.tarifa;
+  const precoMinimo = baseMaisTarifa / (1 - totalPct);
+  const precoSaudavel = (baseMaisTarifa + CFG.lucroAlvoRS) / (1 - totalPct);
+  const precoPremium = precoSaudavel * (1 + CFG.markupPremium);
+  return { nome: c.nome, totalPct, baseMaisTarifa, precoMinimo, precoSaudavel, precoPremium };
+}
+// custo médio por TIPO de material (PLA, PETG...), ponderado por estoque
+function custoMedioMaterial(insumos, tipo) {
+  const itens = insumos.filter((i) => i.material === tipo && (i.cat === "Filamento" || i.cat === "Resina"));
+  if (!itens.length) return 0;
+  const totalQtd = itens.reduce((a, i) => a + (i.estoque || 0), 0);
+  if (totalQtd > 0) return itens.reduce((a, i) => a + i.custoUn * (i.estoque || 0), 0) / totalQtd;
+  return avg(itens.map((i) => i.custoUn)); // sem estoque: média simples
+}
+function avg(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0; }
+// custo/hora de uma máquina = energia + depreciação + manutenção
+function custoHoraMaquina(m) {
+  if (!m) return 0;
+  return (m.potenciaKw || 0) * (m.tarifaEnergia || 0) + (m.valor || 0) / (m.vidaUtilH || 1) + (m.manutHora || 0);
+}
+
+function App({ userKey = "default", onLogout }) {
+  // ===================== ESTADO GLOBAL (persistido) =====================
+  const STORAGE_VERSION = "10";
+  const PFX = `ms3d_${userKey}_`;
+  React.useEffect(() => {
+    const v = localStorage.getItem(PFX + "version");
+    if (v !== STORAGE_VERSION) {
+      ["produtos", "insumos", "maquinas", "orcamentos", "pedidos", "cond"].forEach((k) => localStorage.removeItem(PFX + k));
+      localStorage.setItem(PFX + "version", STORAGE_VERSION);
+    }
+  }, []);
+  const LS = (k, def) => {
+    try {
+      if (localStorage.getItem(PFX + "version") !== STORAGE_VERSION) return def;
+      const v = localStorage.getItem(PFX + k); return v ? JSON.parse(v) : def;
+    } catch { return def; }
+  };
+  const save = (k, v) => { try { localStorage.setItem(PFX + k, JSON.stringify(v)); } catch {} };
+  const resetDados = () => {
+    ["produtos", "insumos", "maquinas", "orcamentos", "pedidos", "cond"].forEach((k) => localStorage.removeItem(PFX + k));
+    setProdutos(PRODUTOS_SEED); setInsumos(INSUMOS_SEED); setMaquinas(MAQUINAS_SEED); setOrcamentos(ORC_SEED); setPedidos(PEDIDOS_SEED); setCond(COND_SEED);
+  };
+
+  const [tab, setTab] = React.useState("dashboard");
+  const [plan, setPlan] = React.useState(() => LS("plan", "Pro"));
+  const [showPlans, setShowPlans] = React.useState(false);
+
+  const [produtos, setProdutos] = React.useState(() => LS("produtos", PRODUTOS_SEED));
+  const [insumos, setInsumos] = React.useState(() => LS("insumos", INSUMOS_SEED));
+  const [maquinas, setMaquinas] = React.useState(() => LS("maquinas", MAQUINAS_SEED));
+  const [orcamentos, setOrcamentos] = React.useState(() => LS("orcamentos", ORC_SEED));
+  const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
+  const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
+
+  React.useEffect(() => save("plan", plan), [plan]);
+  React.useEffect(() => save("produtos", produtos), [produtos]);
+  React.useEffect(() => save("insumos", insumos), [insumos]);
+  React.useEffect(() => save("maquinas", maquinas), [maquinas]);
+  React.useEffect(() => save("orcamentos", orcamentos), [orcamentos]);
+  React.useEffect(() => save("cond", cond), [cond]);
+  React.useEffect(() => save("pedidos", pedidos), [pedidos]);
+
+  // ===================== CALCULADORA (estado de trabalho) =====================
+  const [input, setInput] = React.useState({
+    // 1. Identificação (só descrição — SKU é gerado no catálogo)
+    nome: "Suporte de headset 3D",
+    taxaFalhas: 0.08, horasImpressao: 7,
+    // 2. Material (custo médio por TIPO no estoque, ou manual)
+    matFonte: "estoque", matTipo: "PLA", custoMaterial: 0.10, consumo: 80, perdas: 10,
+    coresAtivo: false, cores: [],
+    // 3. Operacional
+    opMode: "maquina", maquinaId: "MAQ-1", opManual: 0,
+    // 4. Mão de obra
+    moMode: "tempo", moHora: 25, setup: 5, retirada: 5, acabamento: 12, embalagemMin: 6, moManual: 0,
+    // 5. Acessórios
+    acessorios: [],
+    // 6. Despacho
+    despacho: [{ fonte: "estoque", insumoId: "EMB-CAIXA-P", qtd: 1, custoManual: 0 }],
+    brindeAtivo: true, brindeValor: 1,
+    // preço (definido no resumo)
+    canalRef: "Mercado Livre", precoPraticado: 0,
+    impostoRegime: "Simples Nacional", impostoTaxa: 0.06,
+    usarAds: true, usarSeg: true,
+    // kits
+    kitQtd: 3, kitDesconto: 0.08, kitEmbExtra: 1.75, kitBrindeExtra: 1,
+  });
+  const set = (k, v) => setInput((s) => ({ ...s, [k]: v }));
+  const r = React.useMemo(() => calcular(input, { insumos, maquinas }), [input, insumos, maquinas]);
+
+  const kit = React.useMemo(() => {
+    const precoKit = r.precoSaudavel * input.kitQtd * (1 - input.kitDesconto);
+    const custoProdKit = r.custoProducao * input.kitQtd;
+    const custoLogKit = r.custoLogistico + input.kitEmbExtra + input.kitBrindeExtra;
+    const lucroUnit = r.precoSaudavel - r.custoProducao - r.custoLogistico - r.canal.tarifa - r.precoSaudavel * r.totalPct;
+    const lucroKit = precoKit - custoProdKit - custoLogKit - r.canal.tarifa - precoKit * r.totalPct;
+    return { precoKit, lucroUnit, lucroKit, lucroKitUnit: lucroKit / input.kitQtd,
+      margemUnit: lucroUnit / r.precoSaudavel, margemKit: lucroKit / precoKit };
+  }, [r, input]);
+
+  // ===================== AÇÕES DO FLUXO =====================
+  // gera SKU automático a partir da descrição + sequencial
+  const gerarSku = (nome) => {
+    const base = (nome || "PROD").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase().replace(/[^A-Z0-9 ]/g, "").trim().split(/\s+/).slice(0, 2)
+      .map((w) => w.slice(0, 4)).join("-") || "PROD";
+    let n = 1, sku;
+    do { sku = `${base}-${String(n).padStart(3, "0")}`; n++; } while (produtos.some((p) => p.sku === sku));
+    return sku;
+  };
+
+  // 2) Cadastrar produto precificado no catálogo (SKU gerado aqui)
+  const salvarNoCatalogo = () => {
+    // insumo do material: casa pelo tipo (primeiro insumo daquele material)
+    let insumoId = null;
+    const doTipo = insumos.find((i) => i.material === input.matTipo && (i.cat === "Filamento" || i.cat === "Resina"));
+    if (doTipo) insumoId = doTipo.id;
+    const novo = {
+      sku: gerarSku(input.nome),
+      nome: input.nome, canal: r.canalRef,
+      custo: round2(r.custoTotalPeca),
+      precoMin: round2(r.precoMinimo), precoSaudavel: round2(r.precoSaudavel), precoPremium: round2(r.precoPremium),
+      precoPraticado: round2(r.precoPraticado),
+      margem: round2(r.margemAtual * 100), estoquePronto: 0, horasImpressao: input.horasImpressao,
+      insumoId, consumoUn: round2((r.pesoPeca || 0) + (input.perdas || 0)),
+      matTipo: input.matTipo, custoMatUn: round2(r.custoMatUn * 1000) / 1000,
+      cores: input.coresAtivo ? (input.cores || []).filter((c) => c.cor) : [],
+      impostoTaxa: r.taxaImposto, usarAds: r.usarAds, usarSeg: r.usarSeg,
+    };
+    setProdutos((p) => [...p, novo]);
+    setTab("catalogo");
+  };
+
+  // 3) Gerar orçamento (da calculadora) — começa com 1 item, editável depois
+  const gerarOrcamento = () => {
+    const orc = {
+      id: "ORC-" + (1000 + orcamentos.length + 1), cliente: "Novo cliente", contato: "",
+      itens: [{ sku: gerarSku(input.nome), nome: input.nome, qtd: 1, cor: (input.coresAtivo && input.cores[0]) ? input.cores[0].cor : "", preco: round2(r.precoPraticado) }],
+      total: round2(r.precoPraticado), status: "Rascunho", data: hoje(),
+      sinal: cond.sinal, prazoProducao: cond.prazoProducao, prazoEntrega: cond.prazoEntrega, validade: cond.validade, pagamento: cond.pagamento,
+    };
+    setOrcamentos((o) => [orc, ...o]);
+    setTab("orcamentos");
+  };
+
+  // monta um item de pedido com gate individual
+  const montarItem = (it) => {
+    const prod = produtos.find((p) => p.sku === it.sku);
+    const qtd = it.qtd || 1;
+    const temPronto = prod && prod.estoquePronto >= qtd;
+    const insumoId = prod ? prod.insumoId : null;
+    const insumo = insumoId ? insumos.find((i) => i.id === insumoId) : null;
+    const necessario = prod ? (prod.consumoUn || 0) * qtd : 0;
+    const temInsumo = !insumo || insumo.estoque >= necessario;
+    return { sku: it.sku, produto: it.produto || (prod ? prod.nome : it.nome), qtd, cor: it.cor || "",
+      preco: it.preco || (prod ? (prod.precoPraticado || prod.precoSaudavel) : 0),
+      insumoId, necessario, temPronto, temInsumo };
+  };
+  // etapa do pedido a partir dos itens (agregado)
+  const etapaDosItens = (itens) => {
+    if (itens.every((i) => i.temPronto)) return "Embalar";
+    if (itens.some((i) => !i.temPronto && !i.temInsumo)) return "Aguardando insumo";
+    return "Produzir";
+  };
+
+  // 4) Orçamento aprovado vira pedido (com todos os itens)
+  const aprovarOrcamento = (orc) => {
+    setOrcamentos((o) => o.map((x) => x.id === orc.id ? { ...x, status: "Aprovado" } : x));
+    criarPedido({ cliente: orc.cliente, canal: "Venda direta", origem: "Orçamento " + orc.id,
+      itens: orc.itens.map((it) => ({ sku: it.sku, produto: it.nome, qtd: it.qtd, cor: it.cor, preco: it.preco })) });
+  };
+
+  // 4/5) Criar pedido (multi-itens) + gate de estoque por item
+  const criarPedido = (base) => {
+    // aceita {itens:[...]} ou item único {sku,qtd,...}
+    const brutos = base.itens && base.itens.length ? base.itens : [{ sku: base.sku, produto: base.produto, qtd: base.qtd, cor: base.cor, preco: base.preco }];
+    const itens = brutos.map(montarItem);
+    const etapa = etapaDosItens(itens);
+    const ped = {
+      id: "P-" + String(pedidos.length + 1).padStart(4, "0"),
+      cliente: base.cliente || "Cliente", canal: base.canal, origem: base.origem || base.canal,
+      prioridade: base.prioridade || "Normal", etapa, data: hoje(),
+      itens: itens.map(({ temPronto, temInsumo, ...keep }) => keep),
+    };
+    // baixa produto pronto dos itens que tinham estoque
+    itens.filter((i) => i.temPronto).forEach((i) => {
+      setProdutos((ps) => ps.map((p) => p.sku === i.sku ? { ...p, estoquePronto: p.estoquePronto - i.qtd } : p));
+    });
+    setPedidos((q) => [ped, ...q]);
+    setTab("pedidos");
+  };
+
+  // Avançar etapa: Aguardando insumo -> Produzir -> (baixa insumos) -> Embalar -> Despachado
+  const avancar = (id) => {
+    setPedidos((q) => q.map((p) => {
+      if (p.id !== id) return p;
+      if (p.etapa === "Aguardando insumo") {
+        // revalida todos os itens contra o estoque atual
+        const ok = p.itens.every((it) => {
+          if (!it.insumoId) return true;
+          const ins = insumos.find((x) => x.id === it.insumoId);
+          return !ins || ins.estoque >= it.necessario;
+        });
+        return ok ? { ...p, etapa: "Produzir" } : p;
+      }
+      if (p.etapa === "Produzir") {
+        // baixa o insumo de cada item
+        p.itens.forEach((it) => {
+          if (it.insumoId && it.necessario) {
+            setInsumos((arr) => arr.map((i) => i.id === it.insumoId ? { ...i, estoque: Math.max(0, i.estoque - it.necessario) } : i));
+          }
+        });
+        return { ...p, etapa: "Embalar" };
+      }
+      if (p.etapa === "Embalar") return { ...p, etapa: "Despachado", data: hoje() };
+      return p;
+    }));
+  };
+
+  const TABS = [
+    { id: "dashboard", label: "Dashboard", icon: "▦" },
+    { sep: "OPERAÇÃO" },
+    { id: "calc", label: "1 · Precificar", icon: "₿" },
+    { id: "catalogo", label: "2 · Catálogo", icon: "▤" },
+    { id: "orcamentos", label: "3 · Orçamentos", icon: "✎" },
+    { id: "pedidos", label: "4 · Pedidos", icon: "⊞" },
+    { id: "estoque", label: "Insumos", icon: "⬡" },
+    { id: "maquinas", label: "Máquinas", icon: "🖨" },
+    { id: "producao", label: "Produção", icon: "⚙" },
+    { sep: "ANÁLISE" },
+    { id: "roas", label: "ROAS", icon: "📣" },
+    { id: "kits", label: "Kitficação", icon: "▣" },
+    { id: "academia", label: "Academia", icon: "🎓" },
+  ];
+
+  // métricas de fluxo p/ badges e dashboard
+  const fila = {
+    aguardando: pedidos.filter((p) => p.etapa === "Aguardando insumo"),
+    produzir: pedidos.filter((p) => p.etapa === "Produzir"),
+    embalar: pedidos.filter((p) => p.etapa === "Embalar"),
+    despachado: pedidos.filter((p) => p.etapa === "Despachado"),
+  };
+  const itensBaixos = insumos.filter((i) => i.estoque <= i.min).length;
+
+  return (
+    <div className="shell" style={{ background: C.bg, minHeight: "100vh", color: C.ink, fontFamily: "'DM Sans',system-ui,sans-serif", display: "flex" }}>
+      <Estilos />
+      {/* Sidebar */}
+      <aside className="sidebar" style={{ width: 222, borderRight: `1px solid ${C.line}`, padding: "18px 12px", position: "sticky", top: 0, height: "100vh", flexShrink: 0, overflowY: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 6px 18px" }}>
+          <div style={{ width: 32, height: 32, borderRadius: 9, background: `linear-gradient(135deg,${C.accent},#ff9466)`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1a1207" }}>M</div>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 15, lineHeight: 1 }}>Margem<br />Segura <span style={{ color: C.accent }}>3D</span></div>
+        </div>
+        {TABS.map((t, idx) => t.sep ? (
+          <div key={idx} className="navsep" style={{ fontSize: 10, color: C.sub, fontWeight: 700, letterSpacing: 1.2, padding: "14px 12px 6px" }}>{t.sep}</div>
+        ) : (
+          <button key={t.id} className="navbtn" onClick={() => setTab(t.id)}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
+              background: tab === t.id ? C.panel2 : "transparent", border: "none", borderLeft: `3px solid ${tab === t.id ? C.accent : "transparent"}`,
+              color: tab === t.id ? C.ink : C.sub, padding: "9px 12px", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: 2 }}>
+            <span style={{ fontSize: 12, width: 16, textAlign: "center" }}>{t.icon}</span>{t.label}
+            {t.id === "pedidos" && (fila.aguardando.length + fila.produzir.length + fila.embalar.length) > 0 &&
+              <span style={{ marginLeft: "auto", background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{fila.aguardando.length + fila.produzir.length + fila.embalar.length}</span>}
+            {t.id === "estoque" && itensBaixos > 0 &&
+              <span style={{ marginLeft: "auto", background: C.bad, color: "#1a0808", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{itensBaixos}</span>}
+          </button>
+        ))}
+        <button onClick={() => setShowPlans(true)} style={{ width: "calc(100% - 0px)", marginTop: 16, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+          <div style={{ fontSize: 11, color: C.sub }}>Plano atual</div>
+          <div style={{ fontWeight: 700, color: C.accent, fontFamily: "Sora" }}>{plan} <span style={{ fontSize: 11, color: C.sub, fontWeight: 400 }}>· gerenciar</span></div>
+        </button>
+        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12, color: C.sub }}>
+          <span style={{ fontWeight: 600, color: C.ink }}>👤 {userKey}</span>
+        </div>
+        {onLogout && (
+          <button onClick={() => { if (confirm("Sair da conta? Seus dados ficam salvos.")) onLogout(); }}
+            style={{ width: "100%", marginTop: 6, background: "transparent", border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 12px", cursor: "pointer", textAlign: "left", fontFamily: "inherit", color: C.sub, fontSize: 13, fontWeight: 600 }}>
+            ⎋ Sair da conta
+          </button>
+        )}
+      </aside>
+
+      <main className="main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1150, minWidth: 0 }}>
+        {tab === "dashboard" && <Dashboard pedidos={pedidos} fila={fila} produtos={produtos} insumos={insumos} itensBaixos={itensBaixos} go={setTab} />}
+        {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
+        {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} />}
+        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} />}
+        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} />}
+        {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
+        {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} />}
+        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} />}
+        {tab === "roas" && <Roas r={r} />}
+        {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} />}
+        {tab === "academia" && <Academia go={setTab} plan={plan} />}
+      </main>
+
+      {showPlans && <PlansModal plan={plan} setPlan={setPlan} close={() => setShowPlans(false)} resetDados={resetDados} userKey={userKey} onLogout={onLogout} />}
+    </div>
+  );
+}
+
+// ============================================================
+//  TELAS
+// ============================================================
+
+// ---------- DASHBOARD (centro de controle) ----------
+function Dashboard({ pedidos, fila, produtos, insumos, itensBaixos, go }) {
+  const vendas = pedidos.filter((p) => p.etapa === "Despachado");
+  const totalPed = (p) => (p.itens || []).reduce((a, it) => a + it.preco * it.qtd, 0);
+  const receita = vendas.reduce((a, p) => a + totalPed(p), 0);
+  const margemMedia = produtos.length ? produtos.reduce((a, p) => a + (p.margem || 0), 0) / produtos.length : 0;
+  const valorEstoque = insumos.reduce((a, i) => a + i.estoque * i.custoUn, 0);
+  // sugestões inteligentes
+  const sugestoes = [];
+  if (fila.aguardando.length) sugestoes.push({ t: `${fila.aguardando.length} pedido(s) parados por falta de insumo — repor já`, go: "estoque", c: C.bad });
+  if (fila.produzir.length) sugestoes.push({ t: `${fila.produzir.length} pedido(s) aguardando produção`, go: "pedidos", c: C.warn });
+  if (fila.embalar.length) sugestoes.push({ t: `${fila.embalar.length} pedido(s) prontos para embalar`, go: "pedidos", c: C.accent2 });
+  if (itensBaixos) sugestoes.push({ t: `${itensBaixos} insumo(s) abaixo do mínimo — repor`, go: "estoque", c: C.bad });
+  const semMargem = produtos.filter((p) => (p.margem || 0) < 15);
+  if (semMargem.length) sugestoes.push({ t: `${semMargem.length} produto(s) com margem < 15% — revisar preço`, go: "catalogo", c: C.warn });
+  if (!sugestoes.length) sugestoes.push({ t: "Operação saudável — tudo em dia ✓", go: "dashboard", c: C.good });
+
+  return (
+    <div>
+      <H title="Dashboard" sub="Centro de controle da operação" />
+      <div className="grid-kpi" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 18 }}>
+        <KPI label="Receita despachada" value={brl(receita)} c={C.good} />
+        <KPI label="Margem média catálogo" value={pct(margemMedia / 100)} c={margemMedia < 15 ? C.warn : C.accent} onClick={() => go("catalogo")} />
+        <KPI label="Na produção" value={`${fila.produzir.length}`} c={C.warn} onClick={() => go("pedidos")} />
+        <KPI label="Para embalar" value={`${fila.embalar.length}`} c={C.accent2} onClick={() => go("pedidos")} />
+      </div>
+      <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
+        <Card title="Esteira de pedidos">
+          <Esteira fila={fila} />
+          <div style={{ marginTop: 14 }}>
+            {pedidos.slice(0, 5).map((p) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
+                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{p.id} · {(p.itens || []).length} item(ns) · {brl(totalPed(p))}</div>
+                  <div style={{ fontSize: 11, color: C.sub }}>{p.cliente} · {p.origem}</div></div>
+                <EtapaTag e={p.etapa} />
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card title="Sugestões da operação">
+          {sugestoes.map((s, i) => (
+            <div key={i} onClick={() => go(s.go)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", marginBottom: 8, background: C.panel2, borderRadius: 10, cursor: "pointer", borderLeft: `3px solid ${s.c}` }}>
+              <span style={{ fontSize: 13 }}>{s.t}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.line}`, fontSize: 12, color: C.sub }}>
+            Valor em estoque de insumos: <b style={{ color: C.ink }}>{brl(valorEstoque)}</b>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Esteira({ fila }) {
+  const etapas = [
+    { k: "Aguardando", n: fila.aguardando.length, c: C.bad },
+    { k: "Produzir", n: fila.produzir.length, c: C.warn },
+    { k: "Embalar", n: fila.embalar.length, c: C.accent2 },
+    { k: "Despachado", n: fila.despachado.length, c: C.good },
+  ];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {etapas.map((e, i) => (
+        <React.Fragment key={e.k}>
+          <div style={{ flex: 1, background: C.panel2, borderRadius: 10, padding: "12px 10px", textAlign: "center", borderTop: `3px solid ${e.c}` }}>
+            <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22, color: e.c }}>{e.n}</div>
+            <div style={{ fontSize: 11, color: C.sub }}>{e.k}</div>
+          </div>
+          {i < etapas.length - 1 && <span style={{ color: C.sub, fontSize: 16 }}>→</span>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// ---------- 1 · PRECIFICAR (wizard de 6 etapas) ----------
+function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatalogo, gerarOrcamento, go }) {
+  const [etapa, setEtapa] = React.useState(0);
+  const statusColor = r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad;
+  const passos = ["Identificação", "Material", "Operacional", "Mão de obra", "Acessórios", "Despacho", "Resumo"];
+  const acessInsumo = insumos.filter((i) => i.cat === "Acessório");
+  const embInsumo = insumos.filter((i) => i.cat === "Embalagem");
+  // cores disponíveis no estoque para o tipo de material selecionado
+  const coresMaterial = insumos.filter((i) => (i.cat === "Filamento" || i.cat === "Resina") && i.material === input.matTipo && i.cor);
+
+  // helpers de lista (acessórios / despacho)
+  const addItem = (campo, item) => setInput((s) => ({ ...s, [campo]: [...(s[campo] || []), item] }));
+  const updItem = (campo, idx, patch) => setInput((s) => ({ ...s, [campo]: s[campo].map((x, i) => i === idx ? { ...x, ...patch } : x) }));
+  const delItem = (campo, idx) => setInput((s) => ({ ...s, [campo]: s[campo].filter((_, i) => i !== idx) }));
+
+  return (
+    <div>
+      <H title="1 · Precificar produto" sub="Monte o custo de produção passo a passo" />
+      {/* progresso */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 18, flexWrap: "wrap" }}>
+        {passos.map((p, i) => (
+          <button key={p} onClick={() => setEtapa(i)} style={{ flex: 1, minWidth: 90, background: i === etapa ? C.accent : i < etapa ? C.panel2 : C.panel,
+            color: i === etapa ? "#1a1207" : i < etapa ? C.ink : C.sub, border: `1px solid ${i === etapa ? C.accent : C.line}`,
+            borderRadius: 8, padding: "8px 6px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            {i < 6 ? `${i + 1}. ` : ""}{p}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid-wizard" style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 18 }}>
+        <Card>
+          {/* ---- 1 IDENTIFICAÇÃO ---- */}
+          {etapa === 0 && (<>
+            <ST n="1" t="Identificação do produto" />
+            <F label="Descrição do produto" text value={input.nome} onChange={(v) => set("nome", v)} />
+            <Hint>O SKU é gerado automaticamente quando você salvar no catálogo (a partir da descrição). O canal de venda e o preço são definidos no resumo, ao final.</Hint>
+          </>)}
+
+          {/* ---- 2 MATERIAL ---- */}
+          {etapa === 1 && (<>
+            <ST n="2" t="Custo de material" />
+            <Sel label="Tipo de material" value={input.matTipo} onChange={(v) => {
+              const m = MATERIAIS.find((x) => x.tipo === v);
+              set("matTipo", v); if (m && input.matFonte !== "estoque") set("custoMaterial", m.refUn);
+            }} options={MATERIAIS.map((m) => m.tipo)} />
+            <Fonte value={input.matFonte} onChange={(v) => set("matFonte", v)}
+              opcoes={[["estoque", "Custo médio do estoque"], ["manual", "Informar custo manual"]]} />
+            {input.matFonte === "estoque" ? (
+              <div style={{ padding: "10px 12px", borderRadius: 10, background: C.panel2, marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: C.sub }}>Custo médio de {input.matTipo} no estoque</div>
+                <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, color: C.accent }}>{brl(r.custoMatUn)} <span style={{ fontSize: 12, color: C.sub, fontWeight: 400 }}>/ g</span></div>
+                <div style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>Média ponderada por estoque de todas as cores/variações de {input.matTipo}.</div>
+              </div>
+            ) : (
+              <F label="Custo por grama (R$/g)" value={input.custoMaterial} step={0.001} onChange={(v) => set("custoMaterial", v)} suffix="R$" />
+            )}
+            <Row>
+              <F label={input.coresAtivo ? "Peso total (soma das cores)" : "Peso da peça (g)"} value={input.coresAtivo ? round2(r.pesoPeca) : input.consumo}
+                onChange={(v) => set("consumo", v)} />
+              <F label="Perdas/suporte (g)" value={input.perdas} onChange={(v) => set("perdas", v)} />
+            </Row>
+            <Hint>Custo de material = (peso + perdas) × custo por grama. Atual: <b>{brl(r.custoMaterial)}</b></Hint>
+
+            <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 10, background: C.panel2 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+                <input type="checkbox" checked={input.coresAtivo} onChange={(e) => set("coresAtivo", e.target.checked)} /> Cadastrar peso por cor (opcional)
+              </label>
+              {input.coresAtivo && (<div style={{ marginTop: 10 }}>
+                {(input.cores || []).map((c, idx) => (
+                  <div key={idx} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.4fr 0.9fr auto", gap: 10, marginBottom: 8, alignItems: "end" }}>
+                    <label style={{ display: "block" }}>
+                      <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
+                      <select value={c.cor} onChange={(e) => updItem("cores", idx, { cor: e.target.value })}
+                        style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+                        <option value="">— selecione —</option>
+                        {coresMaterial.map((i) => <option key={i.id} value={i.cor}>{i.cor}</option>)}
+                      </select>
+                    </label>
+                    <F label="Peso (g)" value={c.peso} onChange={(v) => updItem("cores", idx, { peso: v })} />
+                    <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delItem("cores", idx)}>✕</MiniBtn></div>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                  <Btn small ghost onClick={() => addItem("cores", { cor: coresMaterial[0] ? coresMaterial[0].cor : "", peso: input.consumo })}>＋ Adicionar cor</Btn>
+                  <span style={{ fontSize: 13, color: C.sub }}>Peso total: <b style={{ color: C.ink }}>{round2(r.pesoPeca)} g</b></span>
+                </div>
+                {!coresMaterial.length && <Hint>Nenhuma cor de {input.matTipo} cadastrada nos insumos. <a onClick={() => go("estoque")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar insumo →</a></Hint>}
+                <Hint>O peso da peça passa a ser a soma das cores. A cor não muda o preço — preço único por produto.</Hint>
+              </div>)}
+            </div>
+          </>)}
+
+          {/* ---- 3 OPERACIONAL ---- */}
+          {etapa === 2 && (<>
+            <ST n="3" t="Custo operacional (energia + depreciação + manutenção)" />
+            <Fonte value={input.opMode} onChange={(v) => set("opMode", v)}
+              opcoes={[["maquina", "Máquina específica"], ["medio", "Custo médio das máquinas"], ["manual", "Valor manual"]]} />
+            {input.opMode === "maquina" && (
+              maquinas.length ? <Sel label="Máquina" value={input.maquinaId} onChange={(v) => set("maquinaId", v)} options={maquinas.map((m) => m.id)} />
+                : <Hint>Nenhuma máquina cadastrada. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar máquinas →</a></Hint>
+            )}
+            {input.opMode === "medio" && (
+              maquinas.length
+                ? <Hint>Usando a <b>média do custo/hora</b> de {maquinas.length} máquina(s): <b style={{ color: C.accent }}>{brl(avg(maquinas.map((m) => custoHoraMaquina(m))))}/h</b>.</Hint>
+                : <Hint>Nenhuma máquina cadastrada para calcular a média. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar →</a></Hint>
+            )}
+            {input.opMode === "manual" && <F label="Custo operacional manual (por peça)" value={input.opManual} step={0.1} onChange={(v) => set("opManual", v)} suffix="R$" />}
+            <F label="Tempo de impressão (h)" value={input.horasImpressao} step={0.5} onChange={(v) => set("horasImpressao", v)} />
+            {input.opMode !== "manual" && <Hint>Energia + depreciação (valor ÷ vida útil) + manutenção, multiplicados pelas horas. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Editar máquinas →</a></Hint>}
+            <Hint>Custo operacional atual: <b>{brl(r.custoOperacional)}</b></Hint>
+          </>)}
+
+          {/* ---- 4 MÃO DE OBRA ---- */}
+          {etapa === 3 && (<>
+            <ST n="4" t="Custo de mão de obra" />
+            <Fonte value={input.moMode} onChange={(v) => set("moMode", v)}
+              opcoes={[["tempo", "Por tempo de trabalho"], ["manual", "Valor manual"], ["nao", "Não considerar"]]} />
+            {input.moMode === "tempo" && (<>
+              <F label="Custo da hora de trabalho (R$/h)" value={input.moHora} step={1} onChange={(v) => set("moHora", v)} suffix="R$" />
+              <Row><F label="Setup (min)" value={input.setup} onChange={(v) => set("setup", v)} /><F label="Retirada (min)" value={input.retirada} onChange={(v) => set("retirada", v)} /></Row>
+              <Row><F label="Acabamento (min)" value={input.acabamento} onChange={(v) => set("acabamento", v)} /><F label="Embalar (min)" value={input.embalagemMin} onChange={(v) => set("embalagemMin", v)} /></Row>
+            </>)}
+            {input.moMode === "manual" && <F label="Custo de mão de obra manual" value={input.moManual} step={0.5} onChange={(v) => set("moManual", v)} suffix="R$" />}
+            {input.moMode === "nao" && <Hint>Mão de obra não será considerada no custo.</Hint>}
+            <Hint>Mão de obra atual: <b>{brl(r.custoMaoObra)}</b></Hint>
+          </>)}
+
+          {/* ---- 5 ACESSÓRIOS ---- */}
+          {etapa === 4 && (<>
+            <ST n="5" t="Custo de acessórios" />
+            <Hint>Argola, rabicho, barbante… Adicione quantos precisar, do estoque ou manual.</Hint>
+            {(input.acessorios || []).map((a, idx) => (
+              <ItemLinha key={idx} item={a} insumosLista={acessInsumo} tipoLabel="acessório"
+                onChange={(patch) => updItem("acessorios", idx, patch)} onDel={() => delItem("acessorios", idx)} />
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Btn small ghost onClick={() => addItem("acessorios", { fonte: "estoque", insumoId: acessInsumo[0] ? acessInsumo[0].id : "", qtd: 1, custoManual: 0 })}>＋ Acessório do estoque</Btn>
+              <Btn small ghost onClick={() => addItem("acessorios", { fonte: "manual", insumoId: "", descManual: "", qtd: 1, custoManual: 1 })}>＋ Acessório manual</Btn>
+            </div>
+            <Hint>Total de acessórios: <b>{brl(r.custoAcessorios)}</b></Hint>
+          </>)}
+
+          {/* ---- 6 DESPACHO ---- */}
+          {etapa === 5 && (<>
+            <ST n="6" t="Custo de despacho" />
+            <Hint>Caixa, saco, sacola, proteção… Do estoque ou manual.</Hint>
+            {(input.despacho || []).map((d, idx) => (
+              <ItemLinha key={idx} item={d} insumosLista={embInsumo} tipoLabel="embalagem"
+                onChange={(patch) => updItem("despacho", idx, patch)} onDel={() => delItem("despacho", idx)} />
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Btn small ghost onClick={() => addItem("despacho", { fonte: "estoque", insumoId: embInsumo[0] ? embInsumo[0].id : "", qtd: 1, custoManual: 0 })}>＋ Embalagem do estoque</Btn>
+              <Btn small ghost onClick={() => addItem("despacho", { fonte: "manual", insumoId: "", descManual: "", qtd: 1, custoManual: 1 })}>＋ Item manual</Btn>
+            </div>
+            <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 10, background: C.panel2 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+                <input type="checkbox" checked={input.brindeAtivo} onChange={(e) => set("brindeAtivo", e.target.checked)} /> Incluir brinde
+              </label>
+              {input.brindeAtivo && <div style={{ marginTop: 8 }}><F label="Valor do brinde" value={input.brindeValor} step={0.1} onChange={(v) => set("brindeValor", v)} suffix="R$" /></div>}
+            </div>
+            <Hint>Total de despacho: <b>{brl(r.custoDespacho)}</b></Hint>
+          </>)}
+
+          {/* ---- RESUMO ---- */}
+          {etapa === 6 && (<>
+            <ST n="✓" t="Resumo e definição de preço" />
+            <Label>Custo de produção</Label>
+            <LinhaCusto k="Material" v={r.custoMaterial} />
+            <LinhaCusto k="Operacional" v={r.custoOperacional} />
+            <LinhaCusto k="Mão de obra" v={r.custoMaoObra} />
+            <LinhaCusto k="Acessórios" v={r.custoAcessorios} />
+            <div style={{ borderTop: `1px solid ${C.line}`, margin: "8px 0", paddingTop: 8 }}>
+              <LinhaCusto k={`Subtotal + falhas (${pct(input.taxaFalhas)})`} v={r.custoProducao} bold />
+            </div>
+            <LinhaCusto k="Despacho (logística)" v={r.custoLogistico} />
+            <div style={{ borderTop: `2px solid ${C.accent}`, margin: "8px 0", paddingTop: 8 }}>
+              <LinhaCusto k="CUSTO DE PRODUÇÃO DA PEÇA" v={r.custoTotalPeca} big />
+            </div>
+            <Row><F label="Taxa de falhas (0–1)" value={input.taxaFalhas} step={0.01} onChange={(v) => set("taxaFalhas", v)} /><div /></Row>
+
+            <div style={{ marginTop: 18 }}><Label>Imposto praticado</Label></div>
+            <Row>
+              <Sel label="Regime tributário" value={input.impostoRegime} onChange={(v) => {
+                const reg = IMPOSTOS.find((x) => x.regime === v);
+                set("impostoRegime", v);
+                if (reg && v !== "Personalizado") set("impostoTaxa", reg.taxa);
+              }} options={IMPOSTOS.map((i) => i.regime)} />
+              <F label="Alíquota sobre a venda" value={input.impostoTaxa}
+                step={0.005} onChange={(v) => { set("impostoTaxa", v); set("impostoRegime", "Personalizado"); }} suffix="(0–1)" />
+            </Row>
+            <Hint>Imposto = {pct(r.taxaImposto)} sobre o preço de venda. Afeta todos os cenários de preço abaixo.</Hint>
+
+            <div style={{ marginTop: 18 }}><Label>Componentes opcionais</Label></div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <Toggle ativo={input.usarAds} onClick={() => set("usarAds", !input.usarAds)}
+                titulo="Ads / Marketing" desc={`${pct(r.canal.ads)} do preço`} />
+              <Toggle ativo={input.usarSeg} onClick={() => set("usarSeg", !input.usarSeg)}
+                titulo="Reserva de segurança" desc={`${pct(r.canal.seg)} do preço`} />
+            </div>
+            <Hint>Desligar um componente o remove do cálculo de preço e da distribuição.</Hint>
+
+            <div style={{ marginTop: 18 }}><Label>Cenário de preços por canal</Label></div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
+                  <th style={{ padding: "6px 8px" }}>Canal</th><th style={{ padding: "6px 8px" }}>Mínimo</th>
+                  <th style={{ padding: "6px 8px" }}>Saudável</th><th style={{ padding: "6px 8px" }}>Premium</th><th style={{ padding: "6px 8px" }}></th></tr></thead>
+                <tbody>
+                  {r.cenarios.map((c) => (
+                    <tr key={c.nome} style={{ borderTop: `1px solid ${C.line}`, background: c.nome === r.canalRef ? C.panel2 : "transparent" }}>
+                      <td style={{ padding: "9px 8px", fontWeight: 600 }}>{c.nome}</td>
+                      <td style={{ padding: "9px 8px", color: C.sub }}>{brl(c.precoMinimo)}</td>
+                      <td style={{ padding: "9px 8px", color: C.accent, fontWeight: 700 }}>{brl(c.precoSaudavel)}</td>
+                      <td style={{ padding: "9px 8px" }}>{brl(c.precoPremium)}</td>
+                      <td style={{ padding: "9px 8px" }}>
+                        <button onClick={() => { set("canalRef", c.nome); set("precoPraticado", round2(c.precoSaudavel)); }}
+                          style={{ background: c.nome === r.canalRef ? C.accent : "transparent", color: c.nome === r.canalRef ? "#1a1207" : C.sub,
+                            border: `1px solid ${c.nome === r.canalRef ? C.accent : C.line}`, padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          {c.nome === r.canalRef ? "Selecionado" : "Usar"}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 16, padding: "14px", borderRadius: 12, background: C.panel2 }}>
+              <Label>Preço que será praticado — {r.canalRef}</Label>
+              <F label="Preço de venda" value={input.precoPraticado || round2(r.precoSaudavel)} step={0.1} onChange={(v) => set("precoPraticado", v)} suffix="R$" />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4 }}>
+                <span style={{ color: C.sub }}>Lucro líquido: <b style={{ color: r.lucroPraticado >= 0 ? C.good : C.bad }}>{brl(r.lucroPraticado)}</b></span>
+                <span style={{ fontWeight: 700, color: statusColor }}>{r.status} · {pct(r.margemAtual)}</span>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 18 }}><Label>Distribuição do preço praticado</Label></div>
+            <Distribuicao r={r} />
+          </>)}
+
+          {/* navegação */}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, gap: 8 }}>
+            <Btn ghost disabled={etapa === 0} onClick={() => setEtapa((e) => Math.max(0, e - 1))}>← Voltar</Btn>
+            {etapa < 6 ? <Btn onClick={() => setEtapa((e) => Math.min(6, e + 1))}>Próximo →</Btn>
+              : <span style={{ fontSize: 12, color: C.sub, alignSelf: "center" }}>Pronto! Salve no catálogo ao lado →</span>}
+          </div>
+        </Card>
+
+        {/* painel lateral fixo */}
+        <div>
+          <Card style={{ marginBottom: 16 }}>
+            <Label>Custo de produção</Label>
+            <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 30, color: C.accent }}>{brl(r.custoTotalPeca)}</div>
+            <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>saída desta etapa</div>
+            <div style={{ marginTop: 14 }}>
+              <Bar label="Material" v={r.custoMaterial} total={r.custoTotalPeca} c={C.accent} fmt={brl} />
+              <Bar label="Operacional" v={r.custoOperacional} total={r.custoTotalPeca} c={C.blue} fmt={brl} />
+              <Bar label="Mão de obra" v={r.custoMaoObra} total={r.custoTotalPeca} c={C.accent2} fmt={brl} />
+              <Bar label="Acessórios" v={r.custoAcessorios} total={r.custoTotalPeca} c={C.purple} fmt={brl} />
+              <Bar label="Despacho" v={r.custoLogistico} total={r.custoTotalPeca} c={C.pink} fmt={brl} />
+            </div>
+          </Card>
+          <Card>
+            <Label>Preço · {r.canalRef}</Label>
+            <PriceRow label="Mínimo" value={r.precoMinimo} sub="cobre custos" />
+            <PriceRow label="Saudável" value={r.precoSaudavel} sub={`+ ${brl(CFG.lucroAlvoRS)} lucro`} big accent />
+            <PriceRow label="Premium" value={r.precoPremium} sub={`+${pct(CFG.markupPremium)}`} />
+            <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: C.panel2, display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 12, color: C.sub }}>Praticado: {brl(r.precoPraticado)}</span>
+              <span style={{ fontWeight: 700, color: statusColor, fontSize: 13 }}>{r.status} · {pct(r.margemAtual)}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <Btn onClick={salvarNoCatalogo} full>＋ Salvar no catálogo</Btn>
+              <Btn onClick={gerarOrcamento} ghost full>✎ Orçamento</Btn>
+            </div>
+            {etapa < 6 && <Hint>Defina o canal e o preço praticado no passo "Resumo".</Hint>}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Linha de item (acessório/despacho) com fonte estoque/manual
+function ItemLinha({ item, insumosLista, onChange, onDel, tipoLabel }) {
+  const insSel = item.fonte === "estoque" ? insumosLista.find((i) => i.id === item.insumoId) : null;
+  const custoUn = item.fonte === "estoque" ? (insSel ? insSel.custoUn : 0) : (item.custoManual || 0);
+  const subtotal = custoUn * (item.qtd || 0);
+  return (
+    <div style={{ background: C.panel2, borderRadius: 10, padding: 12, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+        <select value={item.fonte} onChange={(e) => onChange({ fonte: e.target.value })}
+          style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "6px 8px", borderRadius: 8, fontSize: 12, fontFamily: "inherit" }}>
+          <option value="estoque">Do estoque</option><option value="manual">Manual</option>
+        </select>
+        <span style={{ fontSize: 11, color: C.sub }}>{tipoLabel}</span>
+        <div style={{ marginLeft: "auto" }}><MiniBtn onClick={onDel}>✕</MiniBtn></div>
+      </div>
+      <div className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.6fr 0.9fr 0.7fr", gap: 10 }}>
+        {/* Descrição */}
+        {item.fonte === "estoque" ? (
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Descrição</div>
+            <select value={item.insumoId} onChange={(e) => onChange({ insumoId: e.target.value })}
+              style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+              {insumosLista.length ? insumosLista.map((i) => <option key={i.id} value={i.id}>{i.nome}</option>) : <option value="">— sem itens no estoque —</option>}
+            </select>
+          </label>
+        ) : (
+          <F label="Descrição" text value={item.descManual || ""} onChange={(v) => onChange({ descManual: v })} />
+        )}
+        {/* Custo unitário */}
+        {item.fonte === "estoque" ? (
+          <label style={{ display: "block" }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Custo unitário</div>
+            <div style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.sub, padding: "8px 10px", borderRadius: 8, fontSize: 14 }}>{brl(custoUn)}</div>
+          </label>
+        ) : (
+          <F label="Custo unitário" value={item.custoManual} step={0.1} onChange={(v) => onChange({ custoManual: v })} suffix="R$" />
+        )}
+        {/* Quantidade */}
+        <F label="Qtd" value={item.qtd} onChange={(v) => onChange({ qtd: v })} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", fontSize: 12, color: C.sub, marginTop: 6 }}>
+        Subtotal: <b style={{ color: C.ink, marginLeft: 6 }}>{brl(subtotal)}</b>
+      </div>
+    </div>
+  );
+}
+function Fonte({ value, onChange, opcoes }) {
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+      {opcoes.map(([v, label]) => (
+        <button key={v} onClick={() => onChange(v)} style={{ flex: 1, minWidth: 110, background: value === v ? C.accent : C.panel2,
+          color: value === v ? "#1a1207" : C.sub, border: `1px solid ${value === v ? C.accent : C.line}`, borderRadius: 8,
+          padding: "8px 6px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+      ))}
+    </div>
+  );
+}
+function Toggle({ ativo, onClick, titulo, desc }) {
+  return (
+    <button onClick={onClick} style={{ flex: 1, minWidth: 150, textAlign: "left", display: "flex", alignItems: "center", gap: 10,
+      background: ativo ? "rgba(255,107,53,.10)" : C.panel2, border: `1px solid ${ativo ? C.accent : C.line}`,
+      borderRadius: 10, padding: "10px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+      <span style={{ width: 38, height: 22, borderRadius: 11, background: ativo ? C.accent : C.line, position: "relative", flexShrink: 0, transition: "background .15s" }}>
+        <span style={{ position: "absolute", top: 2, left: ativo ? 18 : 2, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left .15s" }} />
+      </span>
+      <span>
+        <div style={{ fontSize: 13, fontWeight: 700, color: ativo ? C.ink : C.sub }}>{titulo}</div>
+        <div style={{ fontSize: 11, color: C.sub }}>{ativo ? "Considerando · " + desc : "Não considerar"}</div>
+      </span>
+    </button>
+  );
+}
+function Hint({ children }) { return <div style={{ fontSize: 12, color: C.sub, marginTop: 8, lineHeight: 1.5 }}>{children}</div>; }
+function LinhaCusto({ k, v, bold, big }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: big ? 15 : 14 }}>
+    <span style={{ color: big ? C.ink : C.sub, fontWeight: big || bold ? 700 : 400, fontFamily: big ? "Sora" : "inherit" }}>{k}</span>
+    <span style={{ fontWeight: big || bold ? 800 : 600, color: big ? C.accent : C.ink, fontFamily: big ? "Sora" : "inherit" }}>{brl(v)}</span></div>;
+}
+
+// Distribuição (anatomia) do preço praticado: custos, taxas, receita/lucro
+function Distribuicao({ r }) {
+  const preco = r.precoPraticado || 0;
+  const d = r.distrib;
+  const itens = [
+    { k: "Custo de produção", v: d.custoProducaoPeca, c: C.accent },
+    { k: "Despacho", v: d.despacho, c: C.pink },
+    { k: "Tarifa fixa + frete", v: d.tarifaFixa, c: "#c084fc" },
+    { k: "Comissão do canal", v: d.comissao, c: C.blue },
+    { k: "Taxa de pagamento", v: d.pagamento, c: "#38bdf8" },
+    ...(d.usarAds ? [{ k: "Ads / marketing", v: d.ads, c: "#fb923c" }] : []),
+    { k: `Imposto (${pct(r.taxaImposto)})`, v: d.imposto, c: C.warn },
+    ...(d.usarSeg ? [{ k: "Reserva/segurança", v: d.seguranca, c: "#94a3b8" }] : []),
+    { k: "Lucro líquido", v: d.lucro, c: d.lucro >= 0 ? C.good : C.bad },
+  ];
+  const pctDe = (v) => preco ? `${(v / preco * 100).toFixed(1)}%` : "0%";
+  return (
+    <div>
+      {/* barra empilhada */}
+      <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", marginBottom: 12, border: `1px solid ${C.line}` }}>
+        {itens.filter((i) => i.v > 0).map((i, idx) => (
+          <div key={idx} title={`${i.k}: ${pctDe(i.v)}`} style={{ width: `${preco ? Math.max(0, i.v / preco * 100) : 0}%`, background: i.c }} />
+        ))}
+      </div>
+      {/* tabela */}
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <tbody>
+          {itens.map((i, idx) => (
+            <tr key={idx} style={{ borderTop: idx ? `1px solid ${C.line}` : "none" }}>
+              <td style={{ padding: "7px 4px" }}>
+                <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: i.c, marginRight: 8 }} />
+                <span style={{ color: i.k.startsWith("Lucro") ? C.ink : C.sub, fontWeight: i.k.startsWith("Lucro") ? 700 : 400 }}>{i.k}</span>
+              </td>
+              <td style={{ padding: "7px 4px", textAlign: "right", color: C.sub }}>{pctDe(i.v)}</td>
+              <td style={{ padding: "7px 4px", textAlign: "right", fontWeight: 600, color: i.k.startsWith("Lucro") ? (i.v >= 0 ? C.good : C.bad) : C.ink }}>{brl(i.v)}</td>
+            </tr>
+          ))}
+          <tr style={{ borderTop: `2px solid ${C.accent}` }}>
+            <td style={{ padding: "8px 4px", fontWeight: 800, fontFamily: "Sora" }}>Preço de venda</td>
+            <td style={{ padding: "8px 4px", textAlign: "right", color: C.sub }}>100%</td>
+            <td style={{ padding: "8px 4px", textAlign: "right", fontWeight: 800, fontFamily: "Sora", color: C.accent }}>{brl(preco)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------- MÁQUINAS (cadastro) ----------
+function Maquinas({ maquinas, setMaquinas }) {
+  const upd = (id, patch) => setMaquinas((arr) => arr.map((m) => m.id === id ? { ...m, ...patch } : m));
+  const add = () => setMaquinas((arr) => [...arr, { id: "MAQ-" + (arr.length + 1) + "-" + Date.now().toString().slice(-4), nome: "Nova máquina", tipo: "FDM", potenciaKw: 0.1, valor: 1500, vidaUtilH: 4000, manutHora: 0.15, tarifaEnergia: 0.9, horasDia: 16, diasMes: 22, eficiencia: 0.85 }]);
+  const del = (id) => setMaquinas((arr) => arr.filter((m) => m.id !== id));
+  // resumo da frota
+  const custoHoraMedio = avg(maquinas.map((m) => custoHoraMaquina(m)));
+  const custoHoraMin = maquinas.length ? Math.min(...maquinas.map((m) => custoHoraMaquina(m))) : 0;
+  const custoHoraMax = maquinas.length ? Math.max(...maquinas.map((m) => custoHoraMaquina(m))) : 0;
+  const capTotal = maquinas.reduce((a, m) => a + (m.horasDia || 0) * (m.diasMes || 0) * (m.eficiencia || 0), 0);
+  return (
+    <div>
+      <H title="Máquinas" sub="Cadastro único: alimenta o custo operacional da precificação e a capacidade de produção" />
+
+      {/* RESUMO DA FROTA */}
+      <div className="grid-kpi" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 14 }}>
+        <KPI label="Máquinas cadastradas" value={`${maquinas.length}`} c={C.ink} />
+        <KPI label="Custo médio por hora" value={brl(custoHoraMedio)} c={C.accent} />
+        <KPI label="Faixa de custo/hora" value={`${brl(custoHoraMin)}–${brl(custoHoraMax)}`} c={C.sub} />
+        <KPI label="Capacidade total" value={`${Math.round(capTotal)} h/mês`} c={C.blue} />
+      </div>
+      <div style={{ marginBottom: 14, fontSize: 12, color: C.sub }}>
+        O custo operacional "médio" da precificação usa <b style={{ color: C.ink }}>{brl(custoHoraMedio)}/h</b> — a média do custo/hora de todas as máquinas.
+      </div>
+
+      <div style={{ marginBottom: 14 }}><Btn onClick={add}>＋ Cadastrar máquina</Btn></div>
+      <div style={{ display: "grid", gap: 12 }}>
+        {maquinas.map((m) => {
+          const capMes = (m.horasDia || 0) * (m.diasMes || 0) * (m.eficiencia || 0);
+          return (
+          <Card key={m.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+              <input value={m.nome} onChange={(e) => upd(m.id, { nome: e.target.value })}
+                style={{ background: "transparent", border: "none", color: C.ink, fontWeight: 700, fontSize: 16, fontFamily: "Sora", flex: 1, minWidth: 0 }} />
+              <select value={m.tipo || "FDM"} onChange={(e) => upd(m.id, { tipo: e.target.value })}
+                style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.sub, padding: "4px 8px", borderRadius: 6, fontSize: 12, fontFamily: "inherit" }}>
+                <option>FDM</option><option>Resina</option></select>
+              <MiniBtn onClick={() => del(m.id)}>✕</MiniBtn>
+            </div>
+            <Label>Custo operacional</Label>
+            <div className="grid-maq" style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10 }}>
+              <F label="Potência (kW)" value={m.potenciaKw} step={0.01} onChange={(v) => upd(m.id, { potenciaKw: v })} />
+              <F label="Valor (R$)" value={m.valor} step={50} onChange={(v) => upd(m.id, { valor: v })} />
+              <F label="Vida útil (h)" value={m.vidaUtilH} step={100} onChange={(v) => upd(m.id, { vidaUtilH: v })} />
+              <F label="Manut. (R$/h)" value={m.manutHora} step={0.01} onChange={(v) => upd(m.id, { manutHora: v })} />
+              <F label="Energia (R$/kWh)" value={m.tarifaEnergia} step={0.05} onChange={(v) => upd(m.id, { tarifaEnergia: v })} />
+            </div>
+            <div style={{ marginTop: 6 }}><Label>Capacidade de produção</Label></div>
+            <div className="grid-maq" style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10 }}>
+              <F label="Horas/dia" value={m.horasDia} step={1} onChange={(v) => upd(m.id, { horasDia: v })} />
+              <F label="Dias/mês" value={m.diasMes} step={1} onChange={(v) => upd(m.id, { diasMes: v })} />
+              <F label="Eficiência (0–1)" value={m.eficiencia} step={0.01} onChange={(v) => upd(m.id, { eficiencia: v })} />
+              <div style={{ gridColumn: "span 2", alignSelf: "end", fontSize: 12, color: C.sub, paddingBottom: 12 }}>
+                Capacidade útil: <b style={{ color: C.ink }}>{Math.round(capMes)} h/mês</b>
+              </div>
+            </div>
+            <Hint>Custo/hora desta máquina: <b>{brl(custoHoraMaquina(m))}</b> (energia + depreciação + manutenção).</Hint>
+          </Card>
+        ); })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- PRODUÇÃO (capacidade integrada às Máquinas) ----------
+function Producao({ maquinas, produtos, fila, go }) {
+  // carga: horas de impressão dos pedidos em Produção/Aguardando
+  const emProducao = [...(fila.aguardando || []), ...(fila.produzir || [])];
+  const horasPedido = (p) => (p.itens || []).reduce((a, it) => {
+    const prod = produtos.find((x) => x.sku === it.sku);
+    return a + (prod ? (prod.horasImpressao || 0) * it.qtd : 0);
+  }, 0);
+  const horasCarga = emProducao.reduce((a, p) => a + horasPedido(p), 0);
+  const capTotal = maquinas.reduce((a, m) => a + (m.horasDia || 0) * (m.diasMes || 0) * (m.eficiencia || 0), 0);
+  const ocup = capTotal ? horasCarga / capTotal : 0;
+  const ocupCor = ocup > 1 ? C.bad : ocup > 0.85 ? C.warn : C.good;
+  return (
+    <div>
+      <H title="Produção" sub="Capacidade das máquinas cadastradas vs. carga dos pedidos na fila" />
+      <div className="grid-kpi" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 18 }}>
+        <KPI label="Capacidade útil/mês" value={`${Math.round(capTotal)} h`} c={C.ink} />
+        <KPI label="Carga na fila" value={`${Math.round(horasCarga)} h`} c={C.blue} onClick={() => go("pedidos")} />
+        <KPI label="Ocupação" value={pct(ocup)} c={ocupCor} />
+        <KPI label="Máquinas ativas" value={`${maquinas.length}`} c={C.ink} onClick={() => go("maquinas")} />
+      </div>
+      <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Card title="Máquinas e capacidade">
+          {!maquinas.length && <Hint>Nenhuma máquina. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar →</a></Hint>}
+          {maquinas.map((m) => {
+            const cap = (m.horasDia || 0) * (m.diasMes || 0) * (m.eficiencia || 0);
+            const share = capTotal ? cap / capTotal : 0;
+            return (
+              <div key={m.id} style={{ padding: "9px 0", borderBottom: `1px solid ${C.line}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{m.nome} <span style={{ color: C.sub, fontWeight: 400, fontSize: 12 }}>{m.tipo}</span></span>
+                  <span style={{ fontSize: 13, color: C.sub }}>{Math.round(cap)} h/mês</span>
+                </div>
+                <div style={{ height: 6, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, share * 100)}%`, height: "100%", background: C.accent2 }} /></div>
+              </div>
+            );
+          })}
+        </Card>
+        <Card title="Carga atual (pedidos a produzir)">
+          {!emProducao.length && <Hint>Nenhum pedido em produção no momento.</Hint>}
+          {emProducao.map((p) => {
+            const h = horasPedido(p);
+            return (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${C.line}` }}>
+                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{p.id} · {(p.itens || []).length} item(ns)</div>
+                  <div style={{ fontSize: 11, color: C.sub }}>{p.cliente} · {p.etapa}</div></div>
+                <span style={{ fontSize: 13, color: C.sub }}>{h.toFixed(1)} h</span>
+              </div>
+            );
+          })}
+          <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: C.panel2, fontSize: 13 }}>
+            {ocup > 1 ? <span style={{ color: C.bad }}>Capacidade estourada: priorize urgentes ou amplie horas/máquinas.</span>
+              : ocup > 0.85 ? <span style={{ color: C.warn }}>Perto do limite — atenção a novos pedidos.</span>
+              : <span style={{ color: C.good }}>Há folga de capacidade para novos pedidos.</span>}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ---------- 2 · CATÁLOGO ----------
+function Catalogo({ produtos, setProdutos, criarPedido, setInput, go, insumos }) {
+  const [editando, setEditando] = React.useState(null);
+  const addEstoque = (sku, d) => setProdutos((p) => p.map((x) => x.sku === sku ? { ...x, estoquePronto: Math.max(0, x.estoquePronto + d) } : x));
+  const remover = (sku) => { if (confirm("Remover este produto do catálogo?")) setProdutos((p) => p.filter((x) => x.sku !== sku)); };
+  const salvarEdicao = (prod) => { setProdutos((p) => p.map((x) => x.sku === prod.sku ? prod : x)); setEditando(null); };
+  return (
+    <div>
+      <H title="2 · Catálogo de produtos" sub="Produtos precificados — edite preço, canal, cores e re-simule cenários" />
+      {!produtos.length && <Card><Empty txt="Nenhum produto ainda. Vá em '1 · Precificar' e clique em Salvar no catálogo." onGo={() => go("calc")} /></Card>}
+      {!!produtos.length && (
+        <Card>
+          <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
+              <th style={{ padding: "8px" }}>Produto</th><th style={{ padding: "8px" }}>Custo</th><th style={{ padding: "8px" }}>Preço praticado</th><th style={{ padding: "8px" }}>Margem</th><th style={{ padding: "8px" }}>Cores</th><th style={{ padding: "8px" }}>Estoque</th><th style={{ padding: "8px" }}>Ações</th></tr></thead>
+            <tbody>
+              {produtos.map((p) => (
+                <tr key={p.sku} style={{ borderTop: `1px solid ${C.line}` }}>
+                  <td style={{ padding: "10px 8px" }}><div style={{ fontWeight: 600 }}>{p.nome}</div><div style={{ fontSize: 11, color: C.sub }}>{p.sku} · {p.canal}</div></td>
+                  <td style={{ padding: "10px 8px" }}>{brl(p.custo)}</td>
+                  <td style={{ padding: "10px 8px", fontWeight: 600 }}>{brl(p.precoPraticado || p.precoSaudavel)}</td>
+                  <td style={{ padding: "10px 8px", color: p.margem < 15 ? C.warn : C.good }}>{p.margem}%</td>
+                  <td style={{ padding: "10px 8px", color: C.sub }}>{(p.cores && p.cores.length) ? `${p.cores.length} cor(es)` : "—"}</td>
+                  <td style={{ padding: "10px 8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <MiniBtn onClick={() => addEstoque(p.sku, -1)}>−</MiniBtn>
+                      <span style={{ minWidth: 22, textAlign: "center", fontWeight: 700 }}>{p.estoquePronto}</span>
+                      <MiniBtn onClick={() => addEstoque(p.sku, +1)}>＋</MiniBtn>
+                    </div>
+                  </td>
+                  <td style={{ padding: "10px 8px" }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <Btn small ghost onClick={() => setEditando({ ...p, cores: p.cores ? [...p.cores] : [] })}>Editar</Btn>
+                      <Btn small onClick={() => criarPedido({ cliente: "Cliente", canal: p.canal, sku: p.sku, produto: p.nome, qtd: 1, preco: p.precoPraticado || p.precoSaudavel, origem: "Catálogo" })}>Pedido</Btn>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+          <div style={{ fontSize: 12, color: C.sub, marginTop: 12 }}>Dica: estoque pronto = peças já impressas. Pedido com estoque vai direto para Embalar; sem estoque, entra em Produção.</div>
+        </Card>
+      )}
+      {editando && <EditarProduto prod={editando} setProd={setEditando} onSalvar={salvarEdicao} onRemover={() => { remover(editando.sku); setEditando(null); }} close={() => setEditando(null)} insumos={insumos} />}
+    </div>
+  );
+}
+
+// Modal de edição de produto com re-simulação por canal + cores
+function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos }) {
+  const set = (k, v) => setProd((s) => ({ ...s, [k]: v }));
+  const cenarios = CANAIS.map((c) => precoDoCanal(prod.custo || 0, c, prod.impostoTaxa != null ? prod.impostoTaxa : 0.06, prod.usarAds !== false, prod.usarSeg !== false));
+  const ref = cenarios.find((x) => x.nome === prod.canal) || cenarios[0];
+  const preco = prod.precoPraticado || ref.precoSaudavel;
+  const lucro = preco - ref.baseMaisTarifa - preco * ref.totalPct;
+  const margem = preco ? lucro / preco : 0;
+  const statusCor = preco >= ref.precoSaudavel ? C.good : preco >= ref.precoMinimo ? C.warn : C.bad;
+  const statusTxt = preco >= ref.precoSaudavel ? "Saudável" : preco >= ref.precoMinimo ? "Apertado" : "Inviável";
+  // cores disponíveis para o tipo de material do produto
+  const coresMaterial = (insumos || []).filter((i) => (i.cat === "Filamento" || i.cat === "Resina") && i.material === prod.matTipo && i.cor);
+  const pesoTotal = (prod.cores || []).reduce((a, c) => a + (Number(c.peso) || 0), 0);
+  const addCor = () => set("cores", [...(prod.cores || []), { cor: coresMaterial[0] ? coresMaterial[0].cor : "", peso: prod.consumoUn || 0 }]);
+  const updCor = (i, patch) => set("cores", prod.cores.map((c, idx) => idx === i ? { ...c, ...patch } : c));
+  const delCor = (i) => set("cores", prod.cores.filter((_, idx) => idx !== i));
+  return (
+    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20, overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 18, padding: 24, maxWidth: 640, width: "100%", margin: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20 }}>Editar produto</div>
+          <MiniBtn onClick={close}>✕</MiniBtn>
+        </div>
+        <F label="Descrição" text value={prod.nome} onChange={(v) => set("nome", v)} />
+        <div style={{ fontSize: 11, color: C.sub, marginBottom: 12 }}>SKU {prod.sku} · custo de produção {brl(prod.custo)}</div>
+
+        <Label>Cenário de preços por canal</Label>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
+              <th style={{ padding: "6px 8px" }}>Canal</th><th style={{ padding: "6px 8px" }}>Mínimo</th><th style={{ padding: "6px 8px" }}>Saudável</th><th style={{ padding: "6px 8px" }}>Premium</th><th></th></tr></thead>
+            <tbody>
+              {cenarios.map((c) => (
+                <tr key={c.nome} style={{ borderTop: `1px solid ${C.line}`, background: c.nome === prod.canal ? C.panel2 : "transparent" }}>
+                  <td style={{ padding: "8px" }}>{c.nome}</td>
+                  <td style={{ padding: "8px", color: C.sub }}>{brl(c.precoMinimo)}</td>
+                  <td style={{ padding: "8px", color: C.accent, fontWeight: 700 }}>{brl(c.precoSaudavel)}</td>
+                  <td style={{ padding: "8px" }}>{brl(c.precoPremium)}</td>
+                  <td style={{ padding: "8px" }}>
+                    <button onClick={() => { set("canal", c.nome); set("precoPraticado", round2(c.precoSaudavel)); }}
+                      style={{ background: c.nome === prod.canal ? C.accent : "transparent", color: c.nome === prod.canal ? "#1a1207" : C.sub, border: `1px solid ${c.nome === prod.canal ? C.accent : C.line}`, padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      {c.nome === prod.canal ? "Atual" : "Usar"}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 12, background: C.panel2 }}>
+          <Label>Preço praticado — {prod.canal}</Label>
+          <F label="Preço de venda" value={prod.precoPraticado || round2(ref.precoSaudavel)} step={0.1} onChange={(v) => set("precoPraticado", v)} suffix="R$" />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4 }}>
+            <span style={{ color: C.sub }}>Lucro: <b style={{ color: lucro >= 0 ? C.good : C.bad }}>{brl(lucro)}</b></span>
+            <span style={{ fontWeight: 700, color: statusCor }}>{statusTxt} · {pct(margem)}</span>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}><Label>Cores e peso específico</Label></div>
+        {(prod.cores || []).map((c, i) => (
+          <div key={i} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.4fr 0.9fr auto", gap: 10, marginBottom: 8, alignItems: "end" }}>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
+              <select value={c.cor} onChange={(e) => updCor(i, { cor: e.target.value })}
+                style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+                <option value="">— selecione —</option>
+                {coresMaterial.map((ins) => <option key={ins.id} value={ins.cor}>{ins.cor}</option>)}
+                {c.cor && !coresMaterial.some((ins) => ins.cor === c.cor) && <option value={c.cor}>{c.cor}</option>}
+              </select>
+            </label>
+            <F label="Peso (g)" value={c.peso} onChange={(v) => updCor(i, { peso: v })} />
+            <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delCor(i)}>✕</MiniBtn></div>
+          </div>
+        ))}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <Btn small ghost onClick={addCor}>＋ Adicionar cor</Btn>
+          {(prod.cores && prod.cores.length > 0) && <span style={{ fontSize: 13, color: C.sub }}>Peso total: <b style={{ color: C.ink }}>{round2(pesoTotal)} g</b></span>}
+        </div>
+        {!coresMaterial.length && <Hint>Nenhuma cor de {prod.matTipo || "material"} cadastrada nos insumos.</Hint>}
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, gap: 8 }}>
+          <Btn ghost onClick={onRemover}>Excluir produto</Btn>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn ghost onClick={close}>Cancelar</Btn>
+            <Btn onClick={() => onSalvar({ ...prod, margem: round2(margem * 100), precoPraticado: round2(preco) })}>Salvar alterações</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- 3 · ORÇAMENTOS ----------
+function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond }) {
+  const [edit, setEdit] = React.useState(null);
+  const [verCond, setVerCond] = React.useState(false);
+  const novo = () => {
+    const o = { id: "ORC-" + (1000 + orcamentos.length + 1), cliente: "", contato: "", itens: [], total: 0, status: "Rascunho", data: hoje(),
+      sinal: cond.sinal, prazoProducao: cond.prazoProducao, prazoEntrega: cond.prazoEntrega, validade: cond.validade, pagamento: cond.pagamento };
+    setOrcamentos((arr) => [o, ...arr]); setEdit(o);
+  };
+  const salvar = (o) => {
+    const total = o.itens.reduce((a, it) => a + it.preco * it.qtd, 0);
+    setOrcamentos((arr) => arr.map((x) => x.id === o.id ? { ...o, total } : x)); setEdit(null);
+  };
+  const excluir = (id) => { if (confirm("Excluir orçamento?")) { setOrcamentos((arr) => arr.filter((x) => x.id !== id)); setEdit(null); } };
+  return (
+    <div>
+      <H title="3 · Orçamentos" sub="Monte com vários itens, defina condições e envie por WhatsApp ou PDF" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <Btn onClick={novo}>＋ Novo orçamento</Btn>
+        <Btn ghost onClick={() => setVerCond(true)}>⚙ Condições padrão</Btn>
+      </div>
+      {!orcamentos.length && <Card><Empty txt="Nenhum orçamento ainda." /></Card>}
+      {orcamentos.map((o) => (
+        <Card key={o.id} style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 700, fontFamily: "Sora" }}>{o.id} <span style={{ color: C.sub, fontWeight: 400, fontSize: 13 }}>· {o.cliente || "sem cliente"}</span></div>
+              <div style={{ fontSize: 13, color: C.sub, marginTop: 2 }}>{o.itens.length ? o.itens.map((i) => `${i.qtd}× ${i.nome}${i.cor ? " (" + i.cor + ")" : ""}`).join(", ") : "sem itens"} · {o.data}</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{brl(o.total)}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <Tag t={o.status} />
+              <Btn small ghost onClick={() => setEdit({ ...o, itens: o.itens.map((i) => ({ ...i })) })}>Editar</Btn>
+              <Btn small ghost onClick={() => enviarWhats(o, cond)}>WhatsApp</Btn>
+              <Btn small ghost onClick={() => exportarPDF(o, cond)}>PDF</Btn>
+              {o.status !== "Aprovado" && <Btn small onClick={() => aprovar(o)}>Aprovar → Pedido</Btn>}
+            </div>
+          </div>
+        </Card>
+      ))}
+      {edit && <EditarOrcamento orc={edit} setOrc={setEdit} produtos={produtos} onSalvar={salvar} onExcluir={() => excluir(edit.id)} close={() => setEdit(null)} />}
+      {verCond && <CondicoesModal cond={cond} setCond={setCond} close={() => setVerCond(false)} />}
+    </div>
+  );
+}
+
+function EditarOrcamento({ orc, setOrc, produtos, onSalvar, onExcluir, close }) {
+  const set = (k, v) => setOrc((s) => ({ ...s, [k]: v }));
+  const addItem = () => { const p = produtos[0]; setOrc((s) => ({ ...s, itens: [...s.itens, { sku: p ? p.sku : "", nome: p ? p.nome : "", qtd: 1, cor: "", preco: p ? (p.precoPraticado || p.precoSaudavel) : 0 }] })); };
+  const updItem = (i, patch) => setOrc((s) => ({ ...s, itens: s.itens.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
+  const delItem = (i) => setOrc((s) => ({ ...s, itens: s.itens.filter((_, idx) => idx !== i) }));
+  const pickProduto = (i, sku) => { const p = produtos.find((x) => x.sku === sku); updItem(i, { sku, nome: p ? p.nome : "", preco: p ? (p.precoPraticado || p.precoSaudavel) : 0, cor: "" }); };
+  const total = orc.itens.reduce((a, it) => a + it.preco * it.qtd, 0);
+  return (
+    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20, overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 18, padding: 24, maxWidth: 660, width: "100%", margin: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20 }}>{orc.id}</div><MiniBtn onClick={close}>✕</MiniBtn>
+        </div>
+        <div className="grid-item" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <F label="Cliente" text value={orc.cliente} onChange={(v) => set("cliente", v)} />
+          <F label="WhatsApp do cliente (DDD+número)" text value={orc.contato} onChange={(v) => set("contato", v)} />
+        </div>
+        <div style={{ marginTop: 12 }}><Label>Itens</Label></div>
+        {orc.itens.map((it, i) => {
+          const prod = produtos.find((x) => x.sku === it.sku);
+          const cores = prod && prod.cores ? prod.cores : [];
+          return (
+            <div key={i} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.6fr 0.5fr 0.9fr 0.9fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
+              <Sel label="Produto" value={it.sku} onChange={(v) => pickProduto(i, v)} options={produtos.map((p) => p.sku)} />
+              <F label="Qtd" value={it.qtd} onChange={(v) => updItem(i, { qtd: v })} />
+              {cores.length ? (
+                <label style={{ display: "block" }}><div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
+                  <select value={it.cor} onChange={(e) => updItem(i, { cor: e.target.value })} style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+                    <option value="">—</option>{cores.map((c, ci) => <option key={ci} value={c.cor}>{c.cor}</option>)}
+                  </select></label>
+              ) : <div />}
+              <F label="Preço un." value={it.preco} step={0.1} onChange={(v) => updItem(i, { preco: v })} suffix="R$" />
+              <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delItem(i)}>✕</MiniBtn></div>
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <Btn small ghost onClick={addItem}>＋ Adicionar item</Btn>
+          <span style={{ fontWeight: 700 }}>Total: <span style={{ color: C.accent }}>{brl(total)}</span></span>
+        </div>
+        <div style={{ marginTop: 16 }}><Label>Condições comerciais</Label></div>
+        <div className="grid-item" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <F label="Sinal (%)" value={orc.sinal} onChange={(v) => set("sinal", v)} />
+          <F label="Validade da proposta" text value={orc.validade} onChange={(v) => set("validade", v)} />
+          <F label="Prazo de produção" text value={orc.prazoProducao} onChange={(v) => set("prazoProducao", v)} />
+          <F label="Prazo de entrega" text value={orc.prazoEntrega} onChange={(v) => set("prazoEntrega", v)} />
+        </div>
+        <F label="Forma de pagamento" text value={orc.pagamento} onChange={(v) => set("pagamento", v)} />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, gap: 8, flexWrap: "wrap" }}>
+          <Btn ghost onClick={onExcluir}>Excluir</Btn>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn ghost onClick={() => exportarPDF({ ...orc, total }, orc)}>PDF</Btn>
+            <Btn ghost onClick={() => enviarWhats({ ...orc, total }, orc)}>WhatsApp</Btn>
+            <Btn onClick={() => onSalvar(orc)}>Salvar</Btn>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CondicoesModal({ cond, setCond, close }) {
+  const set = (k, v) => setCond((s) => ({ ...s, [k]: v }));
+  return (
+    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20, overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 18, padding: 24, maxWidth: 520, width: "100%", margin: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20 }}>Condições padrão</div><MiniBtn onClick={close}>✕</MiniBtn>
+        </div>
+        <Hint>Usadas como base ao criar um novo orçamento (você pode editar por orçamento).</Hint>
+        <F label="Nome da empresa/marca" text value={cond.empresa} onChange={(v) => set("empresa", v)} />
+        <F label="Seu contato (telefone/WhatsApp)" text value={cond.contatoEmpresa} onChange={(v) => set("contatoEmpresa", v)} />
+        <div className="grid-item" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <F label="Sinal (%)" value={cond.sinal} onChange={(v) => set("sinal", v)} />
+          <F label="Validade" text value={cond.validade} onChange={(v) => set("validade", v)} />
+          <F label="Prazo de produção" text value={cond.prazoProducao} onChange={(v) => set("prazoProducao", v)} />
+          <F label="Prazo de entrega" text value={cond.prazoEntrega} onChange={(v) => set("prazoEntrega", v)} />
+        </div>
+        <F label="Forma de pagamento" text value={cond.pagamento} onChange={(v) => set("pagamento", v)} />
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}><Btn onClick={close}>Concluído</Btn></div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- 4 · PEDIDOS (esteira) ----------
+function Pedidos({ pedidos, fila, avancar, produtos, criarPedido }) {
+  const [cliente, setCliente] = React.useState("");
+  const [canal, setCanal] = React.useState("Mercado Livre");
+  const [itens, setItens] = React.useState([]);
+  const colunas = [
+    { k: "Aguardando insumo", lista: fila.aguardando, c: C.bad, btn: "Revalidar insumo →" },
+    { k: "Produzir", lista: fila.produzir, c: C.warn, btn: "Concluir produção →" },
+    { k: "Embalar", lista: fila.embalar, c: C.accent2, btn: "Marcar embalado →" },
+    { k: "Despachado", lista: fila.despachado, c: C.good, btn: null },
+  ];
+  const addItem = () => { if (produtos[0]) setItens((s) => [...s, { sku: produtos[0].sku, qtd: 1, cor: "" }]); };
+  const updItem = (i, patch) => setItens((s) => s.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  const delItem = (i) => setItens((s) => s.filter((_, idx) => idx !== i));
+  const totalNovo = itens.reduce((a, it) => { const p = produtos.find((x) => x.sku === it.sku); return a + (p ? (p.precoPraticado || p.precoSaudavel) : 0) * (it.qtd || 1); }, 0);
+  const criar = () => {
+    if (!itens.length) return;
+    const lista = itens.map((it) => { const p = produtos.find((x) => x.sku === it.sku); return { sku: it.sku, produto: p ? p.nome : "", qtd: Number(it.qtd) || 1, cor: it.cor, preco: p ? (p.precoPraticado || p.precoSaudavel) : 0 }; });
+    criarPedido({ cliente: cliente || "Cliente", canal, origem: canal, itens: lista });
+    setItens([]); setCliente("");
+  };
+  const totalPed = (p) => (p.itens || []).reduce((a, it) => a + it.preco * it.qtd, 0);
+  return (
+    <div>
+      <H title="4 · Pedidos" sub="Vários itens por pedido · gate de estoque → Produção / Embalar → Despacho" />
+      <Card style={{ marginBottom: 16 }}>
+        <Label>Novo pedido (vários produtos)</Label>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ flex: 1, minWidth: 150 }}><F label="Cliente" text value={cliente} onChange={setCliente} /></div>
+          <div style={{ flex: 1, minWidth: 150 }}><Sel label="Canal / origem" value={canal} onChange={setCanal} options={CANAIS.map((c) => c.nome)} /></div>
+        </div>
+        {itens.map((it, i) => {
+          const prod = produtos.find((x) => x.sku === it.sku);
+          const cores = prod && prod.cores ? prod.cores : [];
+          return (
+            <div key={i} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.8fr 0.6fr 1fr auto", gap: 10, marginBottom: 8, alignItems: "end" }}>
+              <Sel label="Produto" value={it.sku} onChange={(v) => updItem(i, { sku: v, cor: "" })} options={produtos.map((p) => p.sku)} />
+              <F label="Qtd" value={it.qtd} onChange={(v) => updItem(i, { qtd: v })} />
+              {cores.length ? (
+                <label style={{ display: "block" }}><div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
+                  <select value={it.cor} onChange={(e) => updItem(i, { cor: e.target.value })} style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+                    <option value="">— cor —</option>{cores.map((c, ci) => <option key={ci} value={c.cor}>{c.cor}</option>)}
+                  </select></label>
+              ) : <div style={{ fontSize: 11, color: C.sub, paddingBottom: 10 }}>sem cores</div>}
+              <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delItem(i)}>✕</MiniBtn></div>
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+          <Btn small ghost onClick={addItem}>＋ Adicionar item</Btn>
+          {itens.length > 0 && <span style={{ fontSize: 13 }}>Total: <b style={{ color: C.accent }}>{brl(totalNovo)}</b></span>}
+        </div>
+        <div style={{ marginTop: 12 }}><Btn onClick={criar} disabled={!itens.length}>Criar pedido</Btn></div>
+        <div style={{ fontSize: 12, color: C.sub, marginTop: 8 }}>Gate por item: cada produto avalia estoque pronto → insumo → produção.</div>
+      </Card>
+      <div className="grid-kanban" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+        {colunas.map((col) => (
+          <div key={col.k} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <span style={{ fontFamily: "Sora", fontWeight: 700, fontSize: 13, color: col.c }}>{col.k}</span>
+              <span style={{ fontSize: 12, color: C.sub }}>{col.lista.length}</span>
+            </div>
+            {!col.lista.length && <div style={{ fontSize: 12, color: C.sub, padding: "20px 0", textAlign: "center" }}>—</div>}
+            {col.lista.map((p) => (
+              <div key={p.id} style={{ background: C.panel2, borderRadius: 10, padding: 12, marginBottom: 8, borderLeft: `3px solid ${col.c}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>{p.id}</span>
+                  <PrioTag p={p.prioridade} />
+                </div>
+                <div style={{ fontSize: 11, color: C.sub, marginBottom: 6 }}>{p.cliente} · {p.origem}</div>
+                {(p.itens || []).map((it, i) => (
+                  <div key={i} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+                    <span>{it.produto} {it.cor ? <span style={{ color: C.sub }}>({it.cor})</span> : ""} ×{it.qtd}</span>
+                    <span style={{ color: C.sub }}>{brl(it.preco * it.qtd)}</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, borderTop: `1px solid ${C.line}`, marginTop: 4, paddingTop: 4 }}>
+                  <span>Total</span><span>{brl(totalPed(p))}</span>
+                </div>
+                {p.etapa === "Aguardando insumo" && <div style={{ fontSize: 11, color: C.bad, margin: "6px 0" }}>Falta insumo para algum item. Reponha em Insumos.</div>}
+                {col.btn && <div style={{ marginTop: 8 }}><Btn small full onClick={() => avancar(p.id)}>{col.btn}</Btn></div>}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- INSUMOS ----------
+function Insumos({ insumos, setInsumos }) {
+  const add = (id, d) => setInsumos((arr) => arr.map((i) => i.id === id ? { ...i, estoque: Math.max(0, i.estoque + d) } : i));
+  const valorTotal = insumos.reduce((a, i) => a + i.estoque * i.custoUn, 0);
+  return (
+    <div>
+      <H title="Insumos" sub="Estoque, custo médio e alertas de reposição" />
+      <div className="grid-kpi3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, marginBottom: 18 }}>
+        <KPI label="Valor em estoque" value={brl(valorTotal)} c={C.blue} />
+        <KPI label="Insumos cadastrados" value={`${insumos.length}`} c={C.ink} />
+        <KPI label="Em alerta" value={`${insumos.filter((i) => i.estoque <= i.min).length}`} c={C.bad} />
+      </div>
+      <Card>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
+            <th style={{ padding: "8px" }}>Insumo</th><th style={{ padding: "8px" }}>Estoque</th><th style={{ padding: "8px" }}>Custo/un</th><th style={{ padding: "8px" }}>Cobertura</th><th style={{ padding: "8px" }}>Status</th></tr></thead>
+          <tbody>
+            {insumos.map((i) => {
+              const cobertura = i.consumoDia ? Math.round(i.estoque / i.consumoDia) : 0;
+              const baixo = i.estoque <= i.min;
+              return (
+                <tr key={i.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                  <td style={{ padding: "10px 8px" }}><div style={{ fontWeight: 600 }}>{i.nome}</div><div style={{ fontSize: 11, color: C.sub }}>{i.cat} · {i.id}</div></td>
+                  <td style={{ padding: "10px 8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <MiniBtn onClick={() => add(i.id, -10)}>−</MiniBtn>
+                      <span style={{ minWidth: 52, textAlign: "center" }}>{i.estoque} {i.un}</span>
+                      <MiniBtn onClick={() => add(i.id, +10)}>＋</MiniBtn>
+                    </div>
+                    <div style={{ fontSize: 11, color: C.sub }}>mín {i.min}</div>
+                  </td>
+                  <td style={{ padding: "10px 8px" }}>{brl(i.custoUn)}</td>
+                  <td style={{ padding: "10px 8px" }}>{cobertura} dias</td>
+                  <td style={{ padding: "10px 8px" }}><Tag t={baixo ? "Repor" : "OK"} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+// ---------- ROAS ----------
+function Roas({ r }) {
+  return (
+    <div>
+      <H title="ROAS & Anúncios" sub="Análise de apoio — quanto investir em mídia mantendo margem" />
+      <Card style={{ maxWidth: 620 }}>
+        <p style={{ color: C.sub, fontSize: 13, marginTop: 0 }}>Baseado no preço saudável de {brl(r.precoSaudavel)} (produto aberto na calculadora).</p>
+        <BigStat label="Margem antes de ads" value={pct(r.margemAntesAds)} />
+        <BigStat label="ACOS máximo" value={pct(r.acosMax)} hint="% da receita gastável em ads" />
+        <BigStat label="ROAS meta" value={r.roasMeta ? `${r.roasMeta.toFixed(1)}×` : "—"} accent hint="receita por R$ 1 investido" />
+        <BigStat label="Investimento máx. por venda" value={brl(r.investMaxVenda)} />
+        <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: C.panel2, fontSize: 13, color: C.sub }}>
+          {r.acosMax <= 0 ? "Sem margem para ads — suba o preço ou reduza custos." :
+           r.roasMeta <= 4 ? "Alta folga: comporta mídia agressiva com segurança." :
+           r.roasMeta <= 7 ? "Folga controlada: monitore o ACOS de perto." :
+           "Margem apertada para ads: priorize orgânico ou aumente o ticket."}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------- KITS ----------
+function Kits({ input, set, r, kit }) {
+  return (
+    <div>
+      <H title="Kitficação" sub="Análise de apoio — unitário vs kit: ticket, lucro e margem" />
+      <Card style={{ marginBottom: 16, display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 120 }}><F label="Unidades no kit" value={input.kitQtd} onChange={(v) => set("kitQtd", v)} /></div>
+        <div style={{ flex: 1, minWidth: 120 }}><F label="Desconto (0–1)" value={input.kitDesconto} step={0.01} onChange={(v) => set("kitDesconto", v)} /></div>
+        <div style={{ flex: 1, minWidth: 120 }}><F label="Embalagem extra" value={input.kitEmbExtra} step={0.1} onChange={(v) => set("kitEmbExtra", v)} suffix="R$" /></div>
+        <div style={{ flex: 1, minWidth: 120 }}><F label="Brinde extra" value={input.kitBrindeExtra} step={0.1} onChange={(v) => set("kitBrindeExtra", v)} suffix="R$" /></div>
+      </Card>
+      <Card>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <thead><tr style={{ color: C.sub, fontSize: 12, textAlign: "left" }}>
+            <th style={{ padding: "6px 8px" }}>Indicador</th><th style={{ padding: "6px 8px" }}>Unitário</th><th style={{ padding: "6px 8px" }}>Kit</th><th style={{ padding: "6px 8px" }}>Análise</th></tr></thead>
+          <tbody>
+            <KR k="Preço de venda" u={brl(r.precoSaudavel)} kk={brl(kit.precoKit)} />
+            <KR k="Lucro por pedido" u={brl(kit.lucroUnit)} kk={brl(kit.lucroKit)} ok={kit.lucroKit > kit.lucroUnit} note={kit.lucroKit > kit.lucroUnit ? "Kit aumenta lucro" : "Kit não melhora"} />
+            <KR k="Lucro por unidade" u={brl(kit.lucroUnit)} kk={brl(kit.lucroKitUnit)} ok={kit.lucroKitUnit >= kit.lucroUnit} note={kit.lucroKitUnit >= kit.lucroUnit ? "Mantém/melhora" : "Reduz unitário"} />
+            <KR k="Margem líquida" u={pct(kit.margemUnit)} kk={pct(kit.margemKit)} ok={kit.margemKit >= kit.margemUnit} note={kit.margemKit >= kit.margemUnit ? "Margem preservada" : "Margem menor"} />
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+// ---------- ACADEMIA ----------
+const AULAS = [
+  { cap: "Cap. 1", titulo: "Vender muito ≠ lucrar", txt: "Pare de precificar por intuição: custo real + margem + estratégia de canal.", foco: "Conceito base", tab: "dashboard", free: true },
+  { cap: "Cap. 3", titulo: "Custo de produção real", txt: "Material com perdas, energia real, mão de obra, manutenção/depreciação por hora e provisão de falhas.", foco: "1 · Precificar", tab: "calc", free: true },
+  { cap: "Cap. 6", titulo: "Custo de marketplace", txt: "Comissão, taxa e tarifa fixa mudam o preço mínimo por canal.", foco: "1 · Precificar · campo Canal", tab: "calc" },
+  { cap: "Cap. 7", titulo: "ROAS meta e limite de ads", txt: "ROAS meta = 1 / ACOS máximo. Abaixo disso, vende mas corrói margem.", foco: "Análise · ROAS", tab: "roas" },
+  { cap: "Cap. 8", titulo: "Os três preços", txt: "Mínimo cobre custos, saudável adiciona lucro, premium sustenta posicionamento.", foco: "1 · Precificar · resultado", tab: "calc" },
+  { cap: "Cap. 10", titulo: "Kitficação", txt: "Kit só vale se aumentar lucro absoluto e preservar a margem unitária.", foco: "Análise · Kitficação", tab: "kits" },
+  { cap: "Cap. 12", titulo: "Gestão da operação", txt: "Acompanhe a esteira: produção, embalar, despacho. Ocupação alta pede atenção.", foco: "Dashboard · Pedidos", tab: "pedidos" },
+];
+function Academia({ go, plan }) {
+  return (
+    <div>
+      <H title="Academia Margem Segura" sub="O método do eBook integrado a cada etapa da operação" />
+      <div style={{ display: "grid", gap: 14, maxWidth: 760 }}>
+        {AULAS.map((a, i) => {
+          const locked = !a.free && plan === "Free";
+          return (
+            <div key={i} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 18, opacity: locked ? 0.6 : 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.accent, background: "rgba(255,107,53,.12)", padding: "3px 8px", borderRadius: 6 }}>{a.cap}</span>
+                <span style={{ fontFamily: "Sora", fontWeight: 700, fontSize: 16 }}>{a.titulo}</span>
+                {locked && <span style={{ marginLeft: "auto", fontSize: 11, color: C.sub }}>🔒 Pro</span>}
+              </div>
+              <p style={{ fontSize: 14, lineHeight: 1.55, margin: "4px 0 10px" }}>{a.txt}</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                <span style={{ fontSize: 12, color: C.sub }}>🔗 {a.foco}</span>
+                <Btn small disabled={locked} onClick={() => !locked && go(a.tab)}>{locked ? "Bloqueado" : "Aplicar agora →"}</Btn>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- PLANOS ----------
+function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout }) {
+  const planos = [
+    { nome: "Free", preco: "R$ 0", per: "/mês", recursos: ["Calculadora básica", "1 produto", "2 aulas"], cor: C.sub },
+    { nome: "Pro", preco: "R$ 39", per: "/mês", recursos: ["ERP completo", "Catálogo ilimitado", "Orçamentos e Pedidos", "Insumos + Esteira", "Academia completa"], cor: C.accent, destaque: true },
+    { nome: "Studio", preco: "R$ 89", per: "/mês", recursos: ["Tudo do Pro", "Multiusuário", "DRE e relatórios", "Suporte prioritário"], cor: C.accent2 },
+  ];
+  return (
+    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 18, padding: 28, maxWidth: 760, width: "100%" }}>
+        <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22, marginBottom: 4 }}>Escolha seu plano</div>
+        <div style={{ color: C.sub, fontSize: 14, marginBottom: 22 }}>Assinatura mensal · cancele quando quiser</div>
+        <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
+          {planos.map((p) => (
+            <div key={p.nome} style={{ background: C.panel, border: `1.5px solid ${p.destaque ? C.accent : C.line}`, borderRadius: 14, padding: 18, position: "relative" }}>
+              {p.destaque && <div style={{ position: "absolute", top: -10, right: 14, background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 8 }}>POPULAR</div>}
+              <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, color: p.cor }}>{p.nome}</div>
+              <div style={{ margin: "6px 0 14px" }}><span style={{ fontSize: 26, fontWeight: 800, fontFamily: "Sora" }}>{p.preco}</span><span style={{ color: C.sub, fontSize: 13 }}>{p.per}</span></div>
+              {p.recursos.map((rc, i) => <div key={i} style={{ fontSize: 13, color: C.sub, marginBottom: 6 }}>✓ {rc}</div>)}
+              <button onClick={() => { setPlan(p.nome); close(); }} disabled={plan === p.nome}
+                style={{ width: "100%", marginTop: 12, background: plan === p.nome ? C.line : p.destaque ? C.accent : "transparent", border: `1px solid ${p.destaque ? C.accent : C.line}`, color: plan === p.nome ? C.sub : p.destaque ? "#1a1207" : C.ink, padding: "9px", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: plan === p.nome ? "default" : "pointer", fontFamily: "inherit" }}>
+                {plan === p.nome ? "Plano atual" : "Selecionar"}</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <span style={{ fontSize: 12, color: C.sub }}>Usuário: <b style={{ color: C.ink }}>{userKey}</b> · dados salvos no navegador</span>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={() => { if (confirm("Restaurar dados de exemplo? Isso apaga tudo que você cadastrou.")) { resetDados(); close(); } }}
+                style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>↺ Restaurar exemplos</button>
+              <button onClick={() => { if (confirm("Zerar TODOS os dados deste usuário e sair? Esta ação não pode ser desfeita.")) { zerarUsuario(userKey); onLogout && onLogout(); } }}
+                style={{ background: "transparent", border: `1px solid ${C.bad}`, color: C.bad, padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>🗑 Zerar e sair</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+//  COMPONENTES BASE
+// ============================================================
+function H({ title, sub }) { return <div style={{ marginBottom: 20 }}><div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 24, letterSpacing: -0.4 }}>{title}</div><div style={{ color: C.sub, fontSize: 14 }}>{sub}</div></div>; }
+function Card({ children, title, style }) { return <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 20, ...style }}>{title && <Label>{title}</Label>}{children}</div>; }
+function Label({ children }) { return <div style={{ fontSize: 12, color: C.sub, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>{children}</div>; }
+function ST({ n, t }) { return <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 10px" }}><span style={{ width: 20, height: 20, borderRadius: 6, background: C.panel2, color: C.accent, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{n}</span><span style={{ fontFamily: "Sora", fontWeight: 700, fontSize: 14 }}>{t}</span></div>; }
+function Row({ children }) { return <div style={{ display: "flex", gap: 10 }}>{React.Children.map(children, (c) => <div style={{ flex: 1 }}>{c}</div>)}</div>; }
+function F({ label, value, onChange, step = 1, suffix, text }) {
+  // mantém o que o usuário está digitando; só converte para número no blur
+  const [draft, setDraft] = React.useState(null);
+  const display = draft != null ? draft : (text ? (value == null ? "" : value) : (value == null ? "" : String(value).replace(".", ",")));
+  return <label style={{ display: "block", marginBottom: 12 }}>{label ? <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>{label}</div> : null}
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <input type="text" inputMode={text ? "text" : "decimal"} value={display}
+        onChange={(e) => {
+          const v = e.target.value;
+          setDraft(v);
+          if (text) onChange(v);
+          else {
+            const n = parseFloat(v.replace(",", "."));
+            if (!isNaN(n)) onChange(n);
+            else if (v === "" || v === "-") onChange(0);
+          }
+        }}
+        onBlur={() => setDraft(null)}
+        style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 14, fontFamily: "inherit" }} />
+      {suffix && <span style={{ fontSize: 12, color: C.sub }}>{suffix}</span>}</div></label>;
+}
+function Sel({ label, value, onChange, options }) {
+  return <label style={{ display: "block", marginBottom: 12 }}><div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>{label}</div>
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 14, fontFamily: "inherit" }}>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}</select></label>;
+}
+function Btn({ children, onClick, ghost, full, small, disabled }) {
+  return <button onClick={onClick} disabled={disabled}
+    style={{ background: disabled ? C.line : ghost ? "transparent" : C.accent, color: disabled ? C.sub : ghost ? C.ink : "#1a1207",
+      border: `1px solid ${ghost ? C.line : C.accent}`, padding: small ? "6px 12px" : "9px 14px", borderRadius: 8,
+      fontWeight: 700, fontSize: small ? 12 : 13, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "inherit",
+      width: full ? "100%" : "auto" }}>{children}</button>;
+}
+function MiniBtn({ children, onClick }) {
+  return <button onClick={onClick} style={{ width: 24, height: 24, borderRadius: 6, background: C.panel2, border: `1px solid ${C.line}`, color: C.ink, cursor: "pointer", fontFamily: "inherit", fontSize: 14, lineHeight: 1 }}>{children}</button>;
+}
+function KPI({ label, value, c, onClick }) {
+  return <div onClick={onClick} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 16, cursor: onClick ? "pointer" : "default" }}>
+    <div style={{ fontSize: 12, color: C.sub, marginBottom: 6, lineHeight: 1.3 }}>{label}</div>
+    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 24, color: c }}>{value}</div></div>;
+}
+function PriceRow({ label, value, sub, big, accent }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "8px 0", borderBottom: `1px solid ${C.line}` }}>
+    <div><div style={{ fontSize: 13, color: C.sub }}>{label}</div><div style={{ fontSize: 11, color: C.sub, opacity: 0.7 }}>{sub}</div></div>
+    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: big ? 26 : 18, color: accent ? C.accent : C.ink }}>{brl(value)}</div></div>;
+}
+function Bar({ label, v, total, c, fmt }) {
+  const w = total ? Math.min(100, (v / total) * 100) : 0;
+  return <div style={{ marginBottom: 8 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}><span style={{ color: C.sub }}>{label}</span><span>{fmt ? fmt(v) : v}</span></div>
+    <div style={{ height: 6, background: C.bg, borderRadius: 4, overflow: "hidden" }}><div style={{ width: `${w}%`, height: "100%", background: c, borderRadius: 4 }} /></div></div>;
+}
+function BigStat({ label, value, hint, accent }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: `1px solid ${C.line}` }}>
+    <div><div style={{ fontSize: 14 }}>{label}</div>{hint && <div style={{ fontSize: 11, color: C.sub }}>{hint}</div>}</div>
+    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 24, color: accent ? C.accent : C.ink }}>{value}</div></div>;
+}
+function KR({ k, u, kk, ok, note }) {
+  return <tr style={{ borderTop: `1px solid ${C.line}` }}><td style={{ padding: "10px 8px", color: C.sub }}>{k}</td>
+    <td style={{ padding: "10px 8px" }}>{u}</td><td style={{ padding: "10px 8px", fontWeight: 600 }}>{kk}</td>
+    <td style={{ padding: "10px 8px", fontSize: 12, color: note ? (ok ? C.good : C.bad) : C.sub }}>{note || "—"}</td></tr>;
+}
+function Tag({ t }) {
+  const map = { OK: C.good, Atenção: C.warn, Urgente: C.bad, Repor: C.bad, Enviado: C.blue, Aprovado: C.good };
+  const col = map[t] || C.sub;
+  return <span style={{ fontSize: 11, fontWeight: 700, color: col, background: `${col}22`, padding: "3px 9px", borderRadius: 8 }}>{t}</span>;
+}
+function EtapaTag({ e }) {
+  const map = { "Aguardando insumo": C.bad, Produzir: C.warn, Embalar: C.accent2, Despachado: C.good };
+  const col = map[e] || C.sub;
+  return <span style={{ fontSize: 11, fontWeight: 700, color: col, background: `${col}22`, padding: "3px 9px", borderRadius: 8 }}>{e}</span>;
+}
+function PrioTag({ p }) {
+  const map = { Baixa: C.sub, Normal: C.blue, Alta: C.warn, Urgente: C.bad };
+  const col = map[p] || C.sub;
+  return <span style={{ fontSize: 10, fontWeight: 700, color: col }}>{p}</span>;
+}
+function Empty({ txt, onGo }) {
+  return <div style={{ textAlign: "center", padding: "30px 0", color: C.sub }}><div style={{ fontSize: 14, marginBottom: onGo ? 12 : 0 }}>{txt}</div>{onGo && <Btn onClick={onGo}>Ir para Precificar</Btn>}</div>;
+}
+function Estilos() {
+  return <style>{`@import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap');
+    select option{background:#171a21;} *{box-sizing:border-box;} ::-webkit-scrollbar{width:8px;height:8px;} ::-webkit-scrollbar-thumb{background:#2a2f3a;border-radius:4px;}
+    input,select,button{font-family:inherit;}
+    @media (max-width: 860px){
+      .shell{flex-direction:column;}
+      .sidebar{width:100% !important;height:auto !important;position:sticky;top:0;z-index:50;border-right:none;border-bottom:1px solid #2a2f3a;
+        display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:10px 12px !important;overflow-x:auto;}
+      .sidebar > div:first-child{width:100%;padding-bottom:8px !important;}
+      .navsep{display:none !important;}
+      .navbtn{width:auto !important;border-left:none !important;border-bottom:3px solid transparent;white-space:nowrap;padding:8px 12px !important;}
+      .main{padding:16px !important;max-width:100% !important;}
+      .grid-wizard,.grid-2,.grid-3{grid-template-columns:1fr !important;}
+      .grid-kpi,.grid-kpi3{grid-template-columns:repeat(2,1fr) !important;}
+      .grid-kanban{grid-template-columns:1fr !important;}
+      .grid-maq{grid-template-columns:repeat(2,1fr) !important;}
+      .grid-item{grid-template-columns:1fr 1fr !important;}
+    }
+    @media (max-width: 460px){
+      .grid-kpi,.grid-kpi3,.grid-maq{grid-template-columns:1fr !important;}
+    }`}</style>;
+}
+
+// ===================== TELA DE LOGIN =====================
+function LoginApp() {
+  const [session, setSession] = React.useState(() => {
+    try { return JSON.parse(sessionStorage.getItem("ms3d_session") || "null"); } catch { return null; }
+  });
+  const handleLogin = (userKey) => {
+    sessionStorage.setItem("ms3d_session", JSON.stringify(userKey));
+    setSession(userKey);
+  };
+  const handleLogout = () => {
+    sessionStorage.removeItem("ms3d_session");
+    setSession(null);
+  };
+  if (!session) return <LoginScreen onLogin={handleLogin} />;
+  return <App userKey={session} onLogout={handleLogout} />;
+}
+
+function LoginScreen({ onLogin }) {
+  const [modo, setModo] = React.useState("login");
+  const [username, setUsername] = React.useState("");
+  const [senha, setSenha] = React.useState("");
+  const [senha2, setSenha2] = React.useState("");
+  const [erro, setErro] = React.useState("");
+
+  const handleLogin = () => {
+    setErro("");
+    if (!username.trim() || !senha) { setErro("Preencha usuário e senha."); return; }
+    const user = loginUsuario(username.trim().toLowerCase(), senha);
+    if (!user) { setErro("Usuário ou senha incorretos."); return; }
+    onLogin(user.username);
+  };
+  const handleCadastro = () => {
+    setErro("");
+    if (!username.trim() || !senha) { setErro("Preencha todos os campos."); return; }
+    if (senha !== senha2) { setErro("As senhas não coincidem."); return; }
+    if (senha.length < 4) { setErro("A senha deve ter ao menos 4 caracteres."); return; }
+    const ok = cadastrarUsuario(username.trim().toLowerCase(), senha);
+    if (!ok) { setErro("Esse nome de usuário já existe."); return; }
+    onLogin(username.trim().toLowerCase());
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',system-ui,sans-serif", color: C.ink, padding: 20 }}>
+      <Estilos />
+      <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 20, padding: 36, width: "100%", maxWidth: 400 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 11, background: `linear-gradient(135deg,${C.accent},#ff9466)`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1a1207", fontSize: 18 }}>M</div>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, lineHeight: 1.2 }}>Margem Segura <span style={{ color: C.accent }}>3D</span></div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+          {["login", "cadastro"].map((m) => (
+            <button key={m} onClick={() => { setModo(m); setErro(""); setSenha(""); setSenha2(""); }}
+              style={{ flex: 1, background: modo === m ? C.accent : "transparent", color: modo === m ? "#1a1207" : C.sub,
+                border: `1px solid ${modo === m ? C.accent : C.line}`, borderRadius: 9, padding: "9px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+              {m === "login" ? "Entrar" : "Nova conta"}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Usuário</div>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="nome de usuário"
+            autoFocus
+            style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+        </div>
+        <div style={{ marginBottom: modo === "cadastro" ? 14 : 20 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Senha</div>
+          <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="••••••"
+            onKeyDown={(e) => e.key === "Enter" && (modo === "login" ? handleLogin() : null)}
+            style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+        </div>
+        {modo === "cadastro" && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Confirmar senha</div>
+            <input type="password" value={senha2} onChange={(e) => setSenha2(e.target.value)} placeholder="••••••"
+              onKeyDown={(e) => e.key === "Enter" && handleCadastro()}
+              style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+          </div>
+        )}
+        {erro && <div style={{ color: C.bad, fontSize: 13, marginBottom: 14, padding: "8px 12px", background: `${C.bad}18`, borderRadius: 8 }}>{erro}</div>}
+        <button onClick={modo === "login" ? handleLogin : handleCadastro}
+          style={{ width: "100%", background: C.accent, color: "#1a1207", border: "none", borderRadius: 9, padding: "12px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          {modo === "login" ? "Entrar →" : "Criar conta e entrar →"}
+        </button>
+
+        <div style={{ marginTop: 20, fontSize: 12, color: C.sub, textAlign: "center", lineHeight: 1.6 }}>
+          Cada usuário tem seus próprios dados isolados.<br />Os dados ficam salvos no seu navegador.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<LoginApp />);
+</script>
+</body>
+</html>
