@@ -8,11 +8,20 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>html,body{margin:0;padding:0;background:#0e1014;}#root{min-height:100vh;}</style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
+// ===================== CONFIG EMAILJS =====================
+// Para enviar e-mails reais: crie conta em emailjs.com, configure um serviço Gmail e um template.
+// O template deve conter as variáveis: {{to_email}}, {{codigo}}, {{nome}}
+const EMAILJS_PUBLIC_KEY  = "SEU_PUBLIC_KEY";   // Account > API Keys
+const EMAILJS_SERVICE_ID  = "SEU_SERVICE_ID";   // Email Services
+const EMAILJS_TEMPLATE_ID = "SEU_TEMPLATE_ID";  // Email Templates
+const EMAILJS_CONFIGURADO = false; // mude para true após configurar as chaves acima
+
 // ===================== CONSTANTES E DADOS =====================
 const C = { bg: "#0e1014", panel: "#171a21", panel2: "#1e222b", line: "#2a2f3a",
   ink: "#e9edf2", sub: "#8f99a8", accent: "#ff6b35", accent2: "#2dd4bf",
@@ -66,45 +75,23 @@ const MATERIAIS = [
   { tipo: "Resina ABS-like", refUn: 0.16 },
 ];
 
-// Cadastro de máquinas (alimenta precificação E produção/capacidade)
-const MAQUINAS_SEED = [
-  { id: "MAQ-1", nome: "Ender-3 V3 SE", tipo: "FDM", potenciaKw: 0.10, valor: 1300, vidaUtilH: 4000, manutHora: 0.12, tarifaEnergia: 0.90, horasDia: 16, diasMes: 22, eficiencia: 0.82 },
-  { id: "MAQ-2", nome: "Bambu Lab A1", tipo: "FDM", potenciaKw: 0.10, valor: 2900, vidaUtilH: 5000, manutHora: 0.18, tarifaEnergia: 0.90, horasDia: 18, diasMes: 22, eficiencia: 0.88 },
-  { id: "MAQ-3", nome: "Elegoo Saturn 4 Ultra", tipo: "Resina", potenciaKw: 0.08, valor: 3200, vidaUtilH: 4000, manutHora: 0.32, tarifaEnergia: 0.90, horasDia: 12, diasMes: 22, eficiencia: 0.78 },
-];
+// Cadastro de máquinas
+const MAQUINAS_SEED = [];
 
-// Seeds de demonstração
-const PRODUTOS_SEED = [
-  { sku: "SUP-HEAD-001", nome: "Suporte de headset", canal: "Mercado Livre", custo: 27.4, precoMin: 44.5, precoSaudavel: 62.13, precoPremium: 71.45, precoPraticado: 62.13, margem: 24, estoquePronto: 3, horasImpressao: 7, insumoId: "FIL-PLA-PRETO", consumoUn: 90, matTipo: "PLA", cores: [{cor:"Preto",peso:80},{cor:"Branco",peso:85}], impostoTaxa: 0.06, usarAds: true, usarSeg: true },
-  { sku: "ORG-CAB-002", nome: "Organizador de cabos", canal: "Shopee", custo: 9.8, precoMin: 16.2, precoSaudavel: 27.5, precoPremium: 31.6, precoPraticado: 27.5, margem: 31, estoquePronto: 0, horasImpressao: 2.5, insumoId: "FIL-PETG-BRANCO", consumoUn: 45, matTipo: "PETG", cores: [], impostoTaxa: 0.06, usarAds: true, usarSeg: true },
-];
-const INSUMOS_SEED = [
-  { id: "FIL-PLA-PRETO", cat: "Filamento", material: "PLA", cor: "Preto", nome: "PLA Preto 1kg", un: "g", custoUn: 0.1, estoque: 750, min: 200, consumoDia: 90 },
-  { id: "FIL-PLA-BRANCO", cat: "Filamento", material: "PLA", cor: "Branco", nome: "PLA Branco 1kg", un: "g", custoUn: 0.11, estoque: 600, min: 200, consumoDia: 70 },
-  { id: "FIL-PLA-VERMELHO", cat: "Filamento", material: "PLA", cor: "Vermelho", nome: "PLA Vermelho 1kg", un: "g", custoUn: 0.12, estoque: 320, min: 150, consumoDia: 30 },
-  { id: "FIL-PETG-BRANCO", cat: "Filamento", material: "PETG", cor: "Branco", nome: "PETG Branco 1kg", un: "g", custoUn: 0.125, estoque: 180, min: 200, consumoDia: 40 },
-  { id: "FIL-PETG-PRETO", cat: "Filamento", material: "PETG", cor: "Preto", nome: "PETG Preto 1kg", un: "g", custoUn: 0.13, estoque: 250, min: 200, consumoDia: 35 },
-  { id: "FIL-TPU-PRETO", cat: "Filamento", material: "TPU", cor: "Preto", nome: "TPU Preto 1kg", un: "g", custoUn: 0.18, estoque: 300, min: 150, consumoDia: 20 },
-  { id: "RES-ABS-CINZA", cat: "Resina", material: "Resina ABS-like", cor: "Cinza", nome: "Resina ABS-like Cinza", un: "ml", custoUn: 0.14, estoque: 900, min: 250, consumoDia: 50 },
-  { id: "ACE-ARGOLA", cat: "Acessório", nome: "Argola de chaveiro", un: "un", custoUn: 0.25, estoque: 500, min: 100, consumoDia: 15 },
-  { id: "ACE-RABICHO", cat: "Acessório", nome: "Rabicho de luminária", un: "un", custoUn: 3.5, estoque: 60, min: 20, consumoDia: 3 },
-  { id: "EMB-CAIXA-P", cat: "Embalagem", nome: "Caixa P", un: "un", custoUn: 2.5, estoque: 40, min: 30, consumoDia: 6 },
-  { id: "EMB-SACO-BOLHA", cat: "Embalagem", nome: "Saco bolha", un: "un", custoUn: 0.4, estoque: 200, min: 50, consumoDia: 10 },
-];
-const ORC_SEED = [
-  { id: "ORC-1001", cliente: "Loja Geek", contato: "", itens: [{ sku: "SUP-HEAD-001", nome: "Suporte de headset", qtd: 10, cor: "Preto", preco: 62.13 }], total: 621.3, status: "Enviado", data: "20/05",
-    sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; 50% de sinal para iniciar a produção" },
-];
-const PEDIDOS_SEED = [
-  { id: "P-0001", cliente: "Cliente A", canal: "Mercado Livre", origem: "Mercado Livre", prioridade: "Alta", etapa: "Embalar", data: "22/05",
-    itens: [{ sku: "SUP-HEAD-001", produto: "Suporte de headset", qtd: 2, cor: "Preto", preco: 62.13, insumoId: "FIL-PLA-PRETO", necessario: 180 }] },
-  { id: "P-0002", cliente: "Cliente B", canal: "Venda direta", origem: "Orçamento ORC-1000", prioridade: "Normal", etapa: "Produzir", data: "24/05",
-    itens: [{ sku: "ORG-CAB-002", produto: "Organizador de cabos", qtd: 5, cor: "Branco", preco: 27.5, insumoId: "FIL-PETG-BRANCO", necessario: 225 }] },
-  { id: "P-0003", cliente: "Cliente C", canal: "Shopee", origem: "Shopee", prioridade: "Urgente", etapa: "Aguardando insumo", data: "21/05",
-    itens: [{ sku: "ORG-CAB-002", produto: "Organizador de cabos", qtd: 10, cor: "Branco", preco: 27.5, insumoId: "FIL-PETG-BRANCO", necessario: 450 }] },
-];
+// Dados iniciais (vazios — usuário cadastra os seus)
+const PRODUTOS_SEED = [];
+const INSUMOS_SEED  = [];
+const ORC_SEED      = [];
+const PEDIDOS_SEED  = [];
 // Modelo padrão de condições comerciais (editável)
-const COND_SEED = { sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; sinal para iniciar a produção", empresa: "Sua Marca 3D", contatoEmpresa: "" };
+const COND_SEED = { sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; sinal para iniciar a produção", empresa: "", contatoEmpresa: "" };
+
+// Acesso por plano
+const PLAN_ACCESS = {
+  Free:   ["dashboard", "calc", "academia"],
+  Pro:    ["dashboard", "calc", "catalogo", "orcamentos", "pedidos", "estoque", "maquinas", "producao", "roas", "kits", "academia"],
+  Studio: ["dashboard", "calc", "catalogo", "orcamentos", "pedidos", "estoque", "maquinas", "producao", "roas", "kits", "academia"],
+};
 
 // Helpers
 const brl = (n) => (isFinite(n) ? n : 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -113,19 +100,75 @@ const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const hoje = () => new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
 // ===================== GESTÃO DE USUÁRIOS =====================
+function emailParaKey(email) { return email.toLowerCase().replace(/[^a-z0-9]/g, "_"); }
 function getUsuarios() { try { return JSON.parse(localStorage.getItem("ms3d_users") || "[]"); } catch { return []; } }
 function saveUsuarios(list) { localStorage.setItem("ms3d_users", JSON.stringify(list)); }
-function loginUsuario(username, senha) {
+
+function loginUsuario(email, senha) {
   const users = getUsuarios();
-  return users.find((u) => u.username === username && u.senha === senha) || null;
+  const u = users.find((u) => u.email === email.toLowerCase() && u.senha === senha);
+  if (!u) return { ok: false, erro: "E-mail ou senha incorretos." };
+  if (!u.verificado) return { ok: false, erro: "E-mail ainda não verificado.", pendente: true, email: u.email };
+  return { ok: true, user: u };
 }
-function cadastrarUsuario(username, senha) {
+
+function gerarCodigo() { return String(Math.floor(100000 + Math.random() * 900000)); }
+
+function cadastrarUsuario(email, senha) {
   const users = getUsuarios();
-  if (users.find((u) => u.username === username)) return false;
-  users.push({ username, senha, criadoEm: new Date().toLocaleDateString("pt-BR") });
+  if (users.find((u) => u.email === email.toLowerCase())) return { ok: false, erro: "Este e-mail já está cadastrado." };
+  const codigo = gerarCodigo();
+  const expira = Date.now() + 30 * 60 * 1000; // 30 min
+  users.push({ email: email.toLowerCase(), senha, verificado: false, codigo, codigoExpira: expira, plano: "Free", criadoEm: new Date().toLocaleDateString("pt-BR") });
   saveUsuarios(users);
-  return true;
+  return { ok: true, codigo, email: email.toLowerCase() };
 }
+
+function verificarCodigo(email, codigo) {
+  const users = getUsuarios();
+  const idx = users.findIndex((u) => u.email === email.toLowerCase());
+  if (idx === -1) return { ok: false, erro: "Usuário não encontrado." };
+  const u = users[idx];
+  if (u.verificado) return { ok: true };
+  if (Date.now() > u.codigoExpira) return { ok: false, erro: "Código expirado. Cadastre-se novamente." };
+  if (u.codigo !== codigo.trim()) return { ok: false, erro: "Código incorreto." };
+  users[idx] = { ...u, verificado: true, codigo: null };
+  saveUsuarios(users);
+  return { ok: true };
+}
+
+function reenviarCodigo(email) {
+  const users = getUsuarios();
+  const idx = users.findIndex((u) => u.email === email.toLowerCase());
+  if (idx === -1) return null;
+  const codigo = gerarCodigo();
+  users[idx] = { ...users[idx], codigo, codigoExpira: Date.now() + 30 * 60 * 1000 };
+  saveUsuarios(users);
+  return codigo;
+}
+
+function getUserPlano(email) {
+  const users = getUsuarios();
+  const u = users.find((u) => u.email === email.toLowerCase());
+  return u ? u.plano : "Free";
+}
+
+function setUserPlano(email, plano) {
+  const users = getUsuarios();
+  const idx = users.findIndex((u) => u.email === email.toLowerCase());
+  if (idx !== -1) { users[idx].plano = plano; saveUsuarios(users); }
+}
+
+async function enviarEmailVerificacao(email, codigo) {
+  if (!EMAILJS_CONFIGURADO) return false;
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
+      { to_email: email, codigo, nome: email.split("@")[0] },
+      EMAILJS_PUBLIC_KEY);
+    return true;
+  } catch { return false; }
+}
+
 function zerarUsuario(userKey) {
   const PFX = `ms3d_${userKey}_`;
   ["produtos","insumos","maquinas","orcamentos","pedidos","cond","plan","version"].forEach((k) => localStorage.removeItem(PFX + k));
@@ -374,7 +417,9 @@ function App({ userKey = "default", onLogout }) {
   };
 
   const [tab, setTab] = React.useState("dashboard");
-  const [plan, setPlan] = React.useState(() => LS("plan", "Pro"));
+  const [plan, setPlan] = React.useState(() => getUserPlano(userKey) || LS("plan", "Free"));
+  const acessos = PLAN_ACCESS[plan] || PLAN_ACCESS["Free"];
+  const canAccess = (tabId) => acessos.includes(tabId);
   const [showPlans, setShowPlans] = React.useState(false);
 
   const [produtos, setProdutos] = React.useState(() => LS("produtos", PRODUTOS_SEED));
@@ -384,7 +429,7 @@ function App({ userKey = "default", onLogout }) {
   const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
   const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
 
-  React.useEffect(() => save("plan", plan), [plan]);
+  React.useEffect(() => { save("plan", plan); setUserPlano(userKey, plan); }, [plan]);
   React.useEffect(() => save("produtos", produtos), [produtos]);
   React.useEffect(() => save("insumos", insumos), [insumos]);
   React.useEffect(() => save("maquinas", maquinas), [maquinas]);
@@ -584,23 +629,30 @@ function App({ userKey = "default", onLogout }) {
         </div>
         {TABS.map((t, idx) => t.sep ? (
           <div key={idx} className="navsep" style={{ fontSize: 10, color: C.sub, fontWeight: 700, letterSpacing: 1.2, padding: "14px 12px 6px" }}>{t.sep}</div>
-        ) : (
-          <button key={t.id} className="navbtn" onClick={() => setTab(t.id)}
-            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
-              background: tab === t.id ? C.panel2 : "transparent", border: "none", borderLeft: `3px solid ${tab === t.id ? C.accent : "transparent"}`,
-              color: tab === t.id ? C.ink : C.sub, padding: "9px 12px", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: 2 }}>
-            <span style={{ fontSize: 12, width: 16, textAlign: "center" }}>{t.icon}</span>{t.label}
-            {t.id === "pedidos" && (fila.aguardando.length + fila.produzir.length + fila.embalar.length) > 0 &&
-              <span style={{ marginLeft: "auto", background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{fila.aguardando.length + fila.produzir.length + fila.embalar.length}</span>}
-            {t.id === "estoque" && itensBaixos > 0 &&
-              <span style={{ marginLeft: "auto", background: C.bad, color: "#1a0808", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{itensBaixos}</span>}
-          </button>
+        ) : (() => {
+          const locked = !canAccess(t.id);
+          return (
+            <button key={t.id} className="navbtn"
+              onClick={() => locked ? setShowPlans(true) : setTab(t.id)}
+              title={locked ? `Disponível no plano Pro ou Studio` : ""}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left",
+                background: tab === t.id ? C.panel2 : "transparent", border: "none", borderLeft: `3px solid ${tab === t.id ? C.accent : "transparent"}`,
+                color: locked ? `${C.sub}77` : tab === t.id ? C.ink : C.sub,
+                padding: "9px 12px", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: 2 }}>
+              <span style={{ fontSize: 12, width: 16, textAlign: "center" }}>{locked ? "🔒" : t.icon}</span>{t.label}
+              {!locked && t.id === "pedidos" && (fila.aguardando.length + fila.produzir.length + fila.embalar.length) > 0 &&
+                <span style={{ marginLeft: "auto", background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{fila.aguardando.length + fila.produzir.length + fila.embalar.length}</span>}
+              {!locked && t.id === "estoque" && itensBaixos > 0 &&
+                <span style={{ marginLeft: "auto", background: C.bad, color: "#1a0808", fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 10 }}>{itensBaixos}</span>}
+            </button>
+          );
+        })()
         ))}
         <button onClick={() => setShowPlans(true)} style={{ width: "calc(100% - 0px)", marginTop: 16, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
           <div style={{ fontSize: 11, color: C.sub }}>Plano atual</div>
           <div style={{ fontWeight: 700, color: C.accent, fontFamily: "Sora" }}>{plan} <span style={{ fontSize: 11, color: C.sub, fontWeight: 400 }}>· gerenciar</span></div>
         </button>
-        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12, color: C.sub }}>
+        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 11, color: C.sub, wordBreak: "break-all" }}>
           <span style={{ fontWeight: 600, color: C.ink }}>👤 {userKey}</span>
         </div>
         {onLogout && (
@@ -1741,9 +1793,9 @@ function Academia({ go, plan }) {
 // ---------- PLANOS ----------
 function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout }) {
   const planos = [
-    { nome: "Free", preco: "R$ 0", per: "/mês", recursos: ["Calculadora básica", "1 produto", "2 aulas"], cor: C.sub },
-    { nome: "Pro", preco: "R$ 39", per: "/mês", recursos: ["ERP completo", "Catálogo ilimitado", "Orçamentos e Pedidos", "Insumos + Esteira", "Academia completa"], cor: C.accent, destaque: true },
-    { nome: "Studio", preco: "R$ 89", per: "/mês", recursos: ["Tudo do Pro", "Multiusuário", "DRE e relatórios", "Suporte prioritário"], cor: C.accent2 },
+    { nome: "Free", preco: "Grátis", per: "", recursos: ["✓ Calculadora de preço", "✓ Academia (2 aulas)", "✗ Catálogo de produtos", "✗ Orçamentos e Pedidos", "✗ Estoque e Insumos", "✗ Máquinas e Produção"], cor: C.sub },
+    { nome: "Pro", preco: "R$ 39", per: "/mês", recursos: ["✓ ERP completo", "✓ Catálogo ilimitado", "✓ Orçamentos e Pedidos", "✓ Insumos + Estoque", "✓ Máquinas e Produção", "✓ ROAS e Kits", "✓ Academia completa"], cor: C.accent, destaque: true },
+    { nome: "Studio", preco: "R$ 89", per: "/mês", recursos: ["✓ Tudo do Pro", "✓ Multiusuário", "✓ DRE e relatórios", "✓ Suporte prioritário"], cor: C.accent2 },
   ];
   return (
     <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 }}>
@@ -1894,9 +1946,10 @@ function LoginApp() {
   const [session, setSession] = React.useState(() => {
     try { return JSON.parse(sessionStorage.getItem("ms3d_session") || "null"); } catch { return null; }
   });
-  const handleLogin = (userKey) => {
-    sessionStorage.setItem("ms3d_session", JSON.stringify(userKey));
-    setSession(userKey);
+  const handleLogin = (email) => {
+    const key = emailParaKey(email);
+    sessionStorage.setItem("ms3d_session", JSON.stringify(key));
+    setSession(key);
   };
   const handleLogout = () => {
     sessionStorage.removeItem("ms3d_session");
@@ -1907,77 +1960,147 @@ function LoginApp() {
 }
 
 function LoginScreen({ onLogin }) {
-  const [modo, setModo] = React.useState("login");
-  const [username, setUsername] = React.useState("");
+  const [modo, setModo] = React.useState("login"); // "login" | "cadastro" | "verificar"
+  const [email, setEmail] = React.useState("");
   const [senha, setSenha] = React.useState("");
   const [senha2, setSenha2] = React.useState("");
+  const [codigo, setCodigo] = React.useState("");
+  const [codigoGerado, setCodigoGerado] = React.useState(null); // só usado quando email não configurado
+  const [pendEmail, setPendEmail] = React.useState("");
   const [erro, setErro] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+
+  const estiloInput = { width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
 
   const handleLogin = () => {
     setErro("");
-    if (!username.trim() || !senha) { setErro("Preencha usuário e senha."); return; }
-    const user = loginUsuario(username.trim().toLowerCase(), senha);
-    if (!user) { setErro("Usuário ou senha incorretos."); return; }
-    onLogin(user.username);
+    if (!email.trim() || !senha) { setErro("Preencha e-mail e senha."); return; }
+    const res = loginUsuario(email.trim(), senha);
+    if (!res.ok) {
+      if (res.pendente) { setPendEmail(res.email); setModo("verificar"); }
+      else setErro(res.erro);
+      return;
+    }
+    onLogin(res.user.email);
   };
-  const handleCadastro = () => {
+
+  const handleCadastro = async () => {
     setErro("");
-    if (!username.trim() || !senha) { setErro("Preencha todos os campos."); return; }
+    if (!email.trim() || !senha || !senha2) { setErro("Preencha todos os campos."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro("Digite um e-mail válido."); return; }
+    if (senha.length < 6) { setErro("A senha deve ter ao menos 6 caracteres."); return; }
     if (senha !== senha2) { setErro("As senhas não coincidem."); return; }
-    if (senha.length < 4) { setErro("A senha deve ter ao menos 4 caracteres."); return; }
-    const ok = cadastrarUsuario(username.trim().toLowerCase(), senha);
-    if (!ok) { setErro("Esse nome de usuário já existe."); return; }
-    onLogin(username.trim().toLowerCase());
+    setLoading(true);
+    const res = cadastrarUsuario(email.trim(), senha);
+    if (!res.ok) { setErro(res.erro); setLoading(false); return; }
+    const enviou = await enviarEmailVerificacao(res.email, res.codigo);
+    setLoading(false);
+    setPendEmail(res.email);
+    setCodigoGerado(enviou ? null : res.codigo); // se não enviou, mostra o código na tela
+    setModo("verificar");
+  };
+
+  const handleVerificar = () => {
+    setErro("");
+    if (!codigo.trim()) { setErro("Digite o código de verificação."); return; }
+    const res = verificarCodigo(pendEmail, codigo);
+    if (!res.ok) { setErro(res.erro); return; }
+    onLogin(pendEmail);
+  };
+
+  const handleReenviar = async () => {
+    setErro("");
+    setLoading(true);
+    const novoCodigo = reenviarCodigo(pendEmail);
+    const enviou = await enviarEmailVerificacao(pendEmail, novoCodigo);
+    setLoading(false);
+    setCodigoGerado(enviou ? null : novoCodigo);
+    setErro("Novo código gerado.");
   };
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',system-ui,sans-serif", color: C.ink, padding: 20 }}>
       <Estilos />
-      <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 20, padding: 36, width: "100%", maxWidth: 400 }}>
+      <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 20, padding: 36, width: "100%", maxWidth: 420 }}>
+        {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
           <div style={{ width: 40, height: 40, borderRadius: 11, background: `linear-gradient(135deg,${C.accent},#ff9466)`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1a1207", fontSize: 18 }}>M</div>
           <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, lineHeight: 1.2 }}>Margem Segura <span style={{ color: C.accent }}>3D</span></div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-          {["login", "cadastro"].map((m) => (
-            <button key={m} onClick={() => { setModo(m); setErro(""); setSenha(""); setSenha2(""); }}
-              style={{ flex: 1, background: modo === m ? C.accent : "transparent", color: modo === m ? "#1a1207" : C.sub,
-                border: `1px solid ${modo === m ? C.accent : C.line}`, borderRadius: 9, padding: "9px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
-              {m === "login" ? "Entrar" : "Nova conta"}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Usuário</div>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="nome de usuário"
-            autoFocus
-            style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
-        </div>
-        <div style={{ marginBottom: modo === "cadastro" ? 14 : 20 }}>
-          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Senha</div>
-          <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="••••••"
-            onKeyDown={(e) => e.key === "Enter" && (modo === "login" ? handleLogin() : null)}
-            style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
-        </div>
-        {modo === "cadastro" && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Confirmar senha</div>
-            <input type="password" value={senha2} onChange={(e) => setSenha2(e.target.value)} placeholder="••••••"
-              onKeyDown={(e) => e.key === "Enter" && handleCadastro()}
-              style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "10px 12px", borderRadius: 9, fontSize: 14, fontFamily: "inherit", outline: "none" }} />
+        {/* ---- TELA DE VERIFICAÇÃO ---- */}
+        {modo === "verificar" && (<>
+          <div style={{ fontFamily: "Sora", fontWeight: 700, fontSize: 16, marginBottom: 6 }}>Verificar e-mail</div>
+          <div style={{ fontSize: 13, color: C.sub, marginBottom: 20, lineHeight: 1.6 }}>
+            {EMAILJS_CONFIGURADO
+              ? <>Enviamos um código de 6 dígitos para <b style={{ color: C.ink }}>{pendEmail}</b>. Verifique sua caixa de entrada.</>
+              : <>E-mail não configurado. Use o código abaixo para ativar sua conta:<br />
+                  <span style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 24, color: C.accent, letterSpacing: 4 }}>{codigoGerado}</span></>}
           </div>
-        )}
-        {erro && <div style={{ color: C.bad, fontSize: 13, marginBottom: 14, padding: "8px 12px", background: `${C.bad}18`, borderRadius: 8 }}>{erro}</div>}
-        <button onClick={modo === "login" ? handleLogin : handleCadastro}
-          style={{ width: "100%", background: C.accent, color: "#1a1207", border: "none", borderRadius: 9, padding: "12px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-          {modo === "login" ? "Entrar →" : "Criar conta e entrar →"}
-        </button>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Código de verificação</div>
+            <input value={codigo} onChange={(e) => setCodigo(e.target.value)} placeholder="000000" maxLength={6}
+              autoFocus onKeyDown={(e) => e.key === "Enter" && handleVerificar()}
+              style={{ ...estiloInput, fontSize: 22, letterSpacing: 6, textAlign: "center" }} />
+          </div>
+          {erro && <div style={{ color: erro.includes("gerado") ? C.good : C.bad, fontSize: 13, marginBottom: 12, padding: "8px 12px", background: erro.includes("gerado") ? `${C.good}18` : `${C.bad}18`, borderRadius: 8 }}>{erro}</div>}
+          <button onClick={handleVerificar} disabled={loading}
+            style={{ width: "100%", background: C.accent, color: "#1a1207", border: "none", borderRadius: 9, padding: "12px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+            Confirmar →
+          </button>
+          <button onClick={handleReenviar} disabled={loading}
+            style={{ width: "100%", background: "transparent", border: `1px solid ${C.line}`, color: C.sub, borderRadius: 9, padding: "9px", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+            {loading ? "Aguarde..." : "↺ Reenviar código"}
+          </button>
+          <button onClick={() => { setModo("login"); setErro(""); }} style={{ width: "100%", background: "transparent", border: "none", color: C.sub, fontSize: 12, cursor: "pointer", marginTop: 10, fontFamily: "inherit" }}>← Voltar ao login</button>
+        </>)}
 
-        <div style={{ marginTop: 20, fontSize: 12, color: C.sub, textAlign: "center", lineHeight: 1.6 }}>
-          Cada usuário tem seus próprios dados isolados.<br />Os dados ficam salvos no seu navegador.
-        </div>
+        {/* ---- LOGIN / CADASTRO ---- */}
+        {modo !== "verificar" && (<>
+          <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+            {["login", "cadastro"].map((m) => (
+              <button key={m} onClick={() => { setModo(m); setErro(""); setSenha(""); setSenha2(""); }}
+                style={{ flex: 1, background: modo === m ? C.accent : "transparent", color: modo === m ? "#1a1207" : C.sub,
+                  border: `1px solid ${modo === m ? C.accent : C.line}`, borderRadius: 9, padding: "9px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                {m === "login" ? "Entrar" : "Criar conta"}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>E-mail</div>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com"
+              autoFocus style={estiloInput} />
+          </div>
+          <div style={{ marginBottom: modo === "cadastro" ? 14 : 20 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Senha</div>
+            <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="••••••"
+              onKeyDown={(e) => e.key === "Enter" && modo === "login" && handleLogin()}
+              style={estiloInput} />
+          </div>
+          {modo === "cadastro" && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Confirmar senha</div>
+              <input type="password" value={senha2} onChange={(e) => setSenha2(e.target.value)} placeholder="••••••"
+                onKeyDown={(e) => e.key === "Enter" && handleCadastro()}
+                style={estiloInput} />
+            </div>
+          )}
+          {erro && <div style={{ color: C.bad, fontSize: 13, marginBottom: 14, padding: "8px 12px", background: `${C.bad}18`, borderRadius: 8 }}>{erro}</div>}
+          <button onClick={modo === "login" ? handleLogin : handleCadastro} disabled={loading}
+            style={{ width: "100%", background: C.accent, color: "#1a1207", border: "none", borderRadius: 9, padding: "12px", fontWeight: 800, fontSize: 14, cursor: loading ? "wait" : "pointer", fontFamily: "inherit" }}>
+            {loading ? "Aguarde..." : modo === "login" ? "Entrar →" : "Criar conta →"}
+          </button>
+
+          {modo === "cadastro" && (
+            <div style={{ marginTop: 16, padding: "12px", background: C.panel2, borderRadius: 10, fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
+              📋 Plano <b style={{ color: C.ink }}>Free</b> ao criar. Atualize para <b style={{ color: C.accent }}>Pro</b> ou <b style={{ color: C.accent2 }}>Studio</b> dentro do app.
+            </div>
+          )}
+          <div style={{ marginTop: 16, fontSize: 11, color: C.sub, textAlign: "center", lineHeight: 1.6 }}>
+            Dados salvos localmente no navegador · Cada conta é isolada
+          </div>
+        </>)}
       </div>
     </div>
   );
