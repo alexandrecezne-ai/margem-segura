@@ -148,6 +148,28 @@ function verificarCodigo(email, codigo) {
   return { ok: true };
 }
 
+function solicitarResetSenha(email) {
+  const users = getUsuarios();
+  const idx = users.findIndex((u) => u.email === email.toLowerCase());
+  if (idx === -1) return null; // não revela se e-mail existe
+  const codigo = gerarCodigo();
+  users[idx] = { ...users[idx], codigoReset: codigo, codigoResetExpira: Date.now() + 30 * 60 * 1000 };
+  saveUsuarios(users);
+  return { codigo, email: users[idx].email };
+}
+
+function confirmarResetSenha(email, codigo, novaSenha) {
+  const users = getUsuarios();
+  const idx = users.findIndex((u) => u.email === email.toLowerCase());
+  if (idx === -1) return { ok: false, erro: "E-mail não encontrado." };
+  const u = users[idx];
+  if (!u.codigoReset || u.codigoReset !== codigo.trim()) return { ok: false, erro: "Código incorreto." };
+  if (Date.now() > u.codigoResetExpira) return { ok: false, erro: "Código expirado. Solicite um novo." };
+  users[idx] = { ...u, senha: novaSenha, codigoReset: null, codigoResetExpira: null };
+  saveUsuarios(users);
+  return { ok: true };
+}
+
 function reenviarCodigo(email) {
   const users = getUsuarios();
   const idx = users.findIndex((u) => u.email === email.toLowerCase());
@@ -168,6 +190,17 @@ function setUserPlano(email, plano) {
   const users = getUsuarios();
   const idx = users.findIndex((u) => u.email === email.toLowerCase());
   if (idx !== -1) { users[idx].plano = plano; saveUsuarios(users); }
+}
+
+function enviarEmailReset(email, codigo) {
+  if (!EMAILJS_CONFIGURADO) return Promise.resolve(false);
+  const agora = new Date();
+  const expira = new Date(agora.getTime() + 30 * 60000);
+  const time = expira.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
+    { email: email, passcode: codigo, time: time },
+    EMAILJS_PUBLIC_KEY
+  ).then(() => true).catch(() => false);
 }
 
 function enviarEmailVerificacao(email, codigo) {
@@ -2126,13 +2159,15 @@ function LoginApp() {
 }
 
 function LoginScreen({ onLogin }) {
-  const [modo, setModo] = React.useState("login"); // "login" | "cadastro" | "verificar"
+  const [modo, setModo] = React.useState("login"); // "login" | "cadastro" | "verificar" | "reset" | "reset-codigo"
   const [email, setEmail] = React.useState("");
   const [senha, setSenha] = React.useState("");
   const [senha2, setSenha2] = React.useState("");
   const [codigo, setCodigo] = React.useState("");
-  const [codigoGerado, setCodigoGerado] = React.useState(null); // só usado quando email não configurado
+  const [codigoGerado, setCodigoGerado] = React.useState(null);
   const [pendEmail, setPendEmail] = React.useState("");
+  const [novaSenha, setNovaSenha] = React.useState("");
+  const [novaSenha2, setNovaSenha2] = React.useState("");
   const [erro, setErro] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
@@ -2186,6 +2221,35 @@ function LoginScreen({ onLogin }) {
     });
   };
 
+  const handleSolicitarReset = () => {
+    setErro("");
+    if (!email.trim()) { setErro("Digite seu e-mail."); return; }
+    setLoading(true);
+    const res = solicitarResetSenha(email.trim());
+    const cod = res ? res.codigo : gerarCodigo(); // se email não existe, gera código fake (segurança)
+    const emailDest = res ? res.email : email.trim();
+    enviarEmailReset(emailDest, cod).then((enviou) => {
+      setLoading(false);
+      setPendEmail(email.trim());
+      setCodigoGerado(enviou || !res ? null : cod);
+      setModo("reset-codigo");
+      setErro("");
+    });
+  };
+
+  const handleConfirmarReset = () => {
+    setErro("");
+    if (!codigo.trim()) { setErro("Digite o código recebido por e-mail."); return; }
+    if (!novaSenha || novaSenha.length < 6) { setErro("A nova senha deve ter ao menos 6 caracteres."); return; }
+    if (novaSenha !== novaSenha2) { setErro("As senhas não coincidem."); return; }
+    const res = confirmarResetSenha(pendEmail, codigo, novaSenha);
+    if (!res.ok) { setErro(res.erro); return; }
+    setErro("");
+    setModo("login");
+    setSenha("");
+    setEmail(pendEmail);
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',system-ui,sans-serif", color: C.ink, padding: 20 }}>
       <Estilos />
@@ -2195,6 +2259,54 @@ function LoginScreen({ onLogin }) {
           <div style={{ width: 40, height: 40, borderRadius: 11, background: `linear-gradient(135deg,${C.accent},#ff9466)`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, color: "#1a1207", fontSize: 18 }}>M</div>
           <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, lineHeight: 1.2 }}>Margem Segura <span style={{ color: C.accent }}>3D</span></div>
         </div>
+
+        {/* ---- RESET SENHA: SOLICITAR ---- */}
+        {modo === "reset" && (<>
+          <div style={{ fontFamily: "Sora", fontWeight: 700, fontSize: 16, marginBottom: 6 }}>Recuperar senha</div>
+          <div style={{ fontSize: 13, color: C.sub, marginBottom: 20, lineHeight: 1.6 }}>
+            Digite seu e-mail cadastrado. Enviaremos um código para redefinir a senha.
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>E-mail</div>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com"
+              autoFocus onKeyDown={(e) => e.key === "Enter" && handleSolicitarReset()}
+              style={estiloInput} />
+          </div>
+          {erro && <div style={{ color: C.bad, fontSize: 13, marginBottom: 12, padding: "8px 12px", background: `${C.bad}18`, borderRadius: 8 }}>{erro}</div>}
+          <button onClick={handleSolicitarReset} disabled={loading}
+            style={{ width: "100%", background: C.accent, color: "#1a1207", border: "none", borderRadius: 9, padding: "12px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+            {loading ? "Enviando..." : "Enviar código →"}
+          </button>
+          <button onClick={() => { setModo("login"); setErro(""); }} style={{ width: "100%", background: "transparent", border: "none", color: C.sub, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>← Voltar ao login</button>
+        </>)}
+
+        {/* ---- RESET SENHA: CONFIRMAR CÓDIGO + NOVA SENHA ---- */}
+        {modo === "reset-codigo" && (<>
+          <div style={{ fontFamily: "Sora", fontWeight: 700, fontSize: 16, marginBottom: 6 }}>Nova senha</div>
+          <div style={{ fontSize: 13, color: C.sub, marginBottom: 20, lineHeight: 1.6 }}>
+            Código enviado para <b style={{ color: C.ink }}>{pendEmail}</b>. Digite o código e sua nova senha.
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Código recebido</div>
+            <input value={codigo} onChange={(e) => setCodigo(e.target.value)} placeholder="000000" maxLength={6}
+              autoFocus style={{ ...estiloInput, fontSize: 20, letterSpacing: 4, textAlign: "center" }} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Nova senha</div>
+            <input type="password" value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} placeholder="mínimo 6 caracteres" style={estiloInput} />
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Confirmar nova senha</div>
+            <input type="password" value={novaSenha2} onChange={(e) => setNovaSenha2(e.target.value)} placeholder="repita a senha"
+              onKeyDown={(e) => e.key === "Enter" && handleConfirmarReset()} style={estiloInput} />
+          </div>
+          {erro && <div style={{ color: C.bad, fontSize: 13, marginBottom: 12, padding: "8px 12px", background: `${C.bad}18`, borderRadius: 8 }}>{erro}</div>}
+          <button onClick={handleConfirmarReset}
+            style={{ width: "100%", background: C.accent, color: "#1a1207", border: "none", borderRadius: 9, padding: "12px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 10 }}>
+            Redefinir senha →
+          </button>
+          <button onClick={() => { setModo("login"); setErro(""); }} style={{ width: "100%", background: "transparent", border: "none", color: C.sub, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>← Voltar ao login</button>
+        </>)}
 
         {/* ---- TELA DE VERIFICAÇÃO ---- */}
         {modo === "verificar" && (<>
@@ -2224,7 +2336,7 @@ function LoginScreen({ onLogin }) {
         </>)}
 
         {/* ---- LOGIN / CADASTRO ---- */}
-        {modo !== "verificar" && (<>
+        {modo !== "verificar" && modo !== "reset" && modo !== "reset-codigo" && (<>
           <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
             {["login", "cadastro"].map((m) => (
               <button key={m} onClick={() => { setModo(m); setErro(""); setSenha(""); setSenha2(""); }}
@@ -2260,6 +2372,12 @@ function LoginScreen({ onLogin }) {
             {loading ? "Aguarde..." : modo === "login" ? "Entrar →" : "Criar conta →"}
           </button>
 
+          {modo === "login" && (
+            <button onClick={() => { setModo("reset"); setErro(""); }}
+              style={{ width: "100%", background: "transparent", border: "none", color: C.sub, fontSize: 12, cursor: "pointer", marginTop: 10, fontFamily: "inherit", textDecoration: "underline" }}>
+              Esqueci minha senha
+            </button>
+          )}
           {modo === "cadastro" && (
             <div style={{ marginTop: 16, padding: "12px", background: C.panel2, borderRadius: 10, fontSize: 12, color: C.sub, lineHeight: 1.6 }}>
               📋 Plano <b style={{ color: C.ink }}>Free</b> ao criar. Atualize para <b style={{ color: C.accent }}>Pro</b> ou <b style={{ color: C.accent2 }}>Studio</b> dentro do app.
