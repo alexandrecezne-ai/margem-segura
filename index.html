@@ -2215,15 +2215,19 @@ function LoginScreen({ onLogin }) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro("Digite um e-mail válido."); return; }
     if (senha.length < 6) { setErro("A senha deve ter ao menos 6 caracteres."); return; }
     if (senha !== senha2) { setErro("As senhas não coincidem."); return; }
-    const res = cadastrarUsuario(email.trim(), senha);
-    if (!res.ok) { setErro(res.erro); return; }
     setLoading(true);
-    enviarEmailVerificacao(res.email, res.codigo).then((enviou) => {
-      setLoading(false);
-      setPendEmail(res.email);
-      setCodigoGerado(enviou ? null : res.codigo);
-      setModo("verificar");
-    });
+    setErro("Conectando ao servidor...");
+    cadastrarUsuario(email.trim(), senha).then((res) => {
+      if (!res.ok) { setLoading(false); setErro(res.erro); return; }
+      setErro("Conta criada! Enviando código...");
+      return enviarEmailVerificacao(res.email, res.codigo).then((enviou) => {
+        setLoading(false);
+        setPendEmail(res.email);
+        setCodigoGerado(enviou ? null : res.codigo);
+        setErro("");
+        setModo("verificar");
+      });
+    }).catch((e) => { setLoading(false); setErro("Erro: " + (e.message || "Falha na conexão com o servidor.")); });
   };
 
   const handleVerificar = () => {
