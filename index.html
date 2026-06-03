@@ -427,10 +427,14 @@ function calcular(input, ctx) {
   const usarSeg = input.usarSeg !== false;
 
   // ---- PREÇOS POR CANAL ----
-  const cenarios = CANAIS.map((c) => precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg));
+  const canaisAtivos = (input.canaisCustom && input.canaisCustom.length) ? input.canaisCustom : CANAIS;
+  const lucroAlvoModo = input.lucroAlvoModo || "rs";
+  const lucroAlvoRS = lucroAlvoModo === "rs" ? (input.lucroAlvoValor != null ? input.lucroAlvoValor : CFG.lucroAlvoRS) : 0;
+  const lucroAlvoPct = lucroAlvoModo === "pct" ? (input.lucroAlvoValor || 0.15) : 0;
+  const cenarios = canaisAtivos.map((c) => precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlvoRS, lucroAlvoPct, lucroAlvoModo));
   const canalRef = input.canalRef || "Mercado Livre";
   const ref = cenarios.find((x) => x.nome === canalRef) || cenarios[0];
-  const canal = CANAIS.find((c) => c.nome === canalRef) || CANAIS[1];
+  const canal = canaisAtivos.find((c) => c.nome === canalRef) || canaisAtivos[1] || canaisAtivos[0];
   const totalPct = ref.totalPct, baseMaisTarifa = ref.baseMaisTarifa;
   const precoMinimo = ref.precoMinimo, precoSaudavel = ref.precoSaudavel, precoPremium = ref.precoPremium;
   const adsPct = usarAds ? canal.ads : 0;
@@ -472,13 +476,20 @@ function calcular(input, ctx) {
     margemAntesAds, acosMax, roasMeta, investMaxVenda,
     custoEnergia: custoOperacional, custoMaquinaPeca: 0 };
 }
-function precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg) {
+function precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlvoRS, lucroAlvoPct, lucroAlvoModo) {
   const ads = usarAds === false ? 0 : c.ads;
   const seg = usarSeg === false ? 0 : c.seg;
   const totalPct = c.comissao + c.pgto + ads + (taxaImposto || 0) + seg;
   const baseMaisTarifa = custoTotalPeca + c.frete + c.tarifa;
   const precoMinimo = baseMaisTarifa / (1 - totalPct);
-  const precoSaudavel = (baseMaisTarifa + CFG.lucroAlvoRS) / (1 - totalPct);
+  let precoSaudavel;
+  if (lucroAlvoModo === "pct" && lucroAlvoPct > 0) {
+    // preço tal que lucro/preço = lucroAlvoPct
+    const denom = 1 - totalPct - lucroAlvoPct;
+    precoSaudavel = denom > 0 ? baseMaisTarifa / denom : precoMinimo * 1.5;
+  } else {
+    precoSaudavel = (baseMaisTarifa + (lucroAlvoRS != null ? lucroAlvoRS : CFG.lucroAlvoRS)) / (1 - totalPct);
+  }
   const precoPremium = precoSaudavel * (1 + CFG.markupPremium);
   return { nome: c.nome, totalPct, baseMaisTarifa, precoMinimo, precoSaudavel, precoPremium };
 }
@@ -590,6 +601,10 @@ function App({ userKey = "default", onLogout }) {
     canalRef: "Mercado Livre", precoPraticado: 0,
     impostoRegime: "Simples Nacional", impostoTaxa: 0.06,
     usarAds: true, usarSeg: true,
+    // lucro alvo
+    lucroAlvoModo: "rs", lucroAlvoValor: 15,
+    // canais customizados
+    canaisCustom: null, showCanaisConfig: false,
     // kits
     kitQtd: 3, kitDesconto: 0.08, kitEmbExtra: 1.75, kitBrindeExtra: 1,
   });
@@ -1069,6 +1084,25 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
             </div>
             <Row><F label="Taxa de falhas (0–1)" value={input.taxaFalhas} step={0.01} onChange={(v) => set("taxaFalhas", v)} /><div /></Row>
 
+            <div style={{ marginTop: 18 }}><Label>Meta de lucro líquido</Label></div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              {["rs","pct"].map((m) => (
+                <button key={m} onClick={() => { set("lucroAlvoModo", m); set("lucroAlvoValor", m === "rs" ? 15 : 0.20); }}
+                  style={{ flex: 1, background: input.lucroAlvoModo === m ? C.accent : C.panel2, color: input.lucroAlvoModo === m ? "#1a1207" : C.sub,
+                    border: `1px solid ${input.lucroAlvoModo === m ? C.accent : C.line}`, borderRadius: 8, padding: "7px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                  {m === "rs" ? "R$ fixo por peça" : "% de margem"}
+                </button>
+              ))}
+            </div>
+            <F label={input.lucroAlvoModo === "rs" ? "Lucro mínimo desejado por peça (R$)" : "Margem de lucro desejada (ex: 0.25 = 25%)"}
+              value={input.lucroAlvoValor} step={input.lucroAlvoModo === "rs" ? 0.5 : 0.01}
+              onChange={(v) => set("lucroAlvoValor", v)} />
+            <Hint>
+              {input.lucroAlvoModo === "rs"
+                ? <>Preço "Saudável" = cobre todos os custos + <b style={{color:C.accent}}>{brl(input.lucroAlvoValor)}</b> de lucro líquido por peça.</>
+                : <>Preço "Saudável" garante margem líquida de <b style={{color:C.accent}}>{pct(input.lucroAlvoValor)}</b> sobre o preço de venda.</>}
+            </Hint>
+
             <div style={{ marginTop: 18 }}><Label>Imposto praticado</Label></div>
             <Row>
               <Sel label="Regime tributário" value={input.impostoRegime} onChange={(v) => {
@@ -1115,12 +1149,72 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
               </table>
             </div>
 
+            <div style={{ marginTop: 12 }}>
+              <button onClick={() => {
+                if (!input.showCanaisConfig && !input.canaisCustom) set("canaisCustom", JSON.parse(JSON.stringify(CANAIS)));
+                set("showCanaisConfig", !input.showCanaisConfig);
+              }} style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                ⚙ {input.showCanaisConfig ? "Ocultar" : "Personalizar taxas dos canais"}
+              </button>
+              {input.canaisCustom && <button onClick={() => { set("canaisCustom", null); set("showCanaisConfig", false); }}
+                style={{ marginLeft: 8, background: "transparent", border: `1px solid ${C.bad}`, color: C.bad, padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                ↺ Restaurar padrão
+              </button>}
+            </div>
+
+            {input.showCanaisConfig && input.canaisCustom && (
+              <div style={{ marginTop: 12, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ color: C.sub, fontSize: 10, textTransform: "uppercase", textAlign: "left" }}>
+                    <th style={{ padding: "6px 6px" }}>Canal</th>
+                    <th style={{ padding: "6px 6px" }}>Comissão</th>
+                    <th style={{ padding: "6px 6px" }}>Pgto</th>
+                    <th style={{ padding: "6px 6px" }}>Ads</th>
+                    <th style={{ padding: "6px 6px" }}>Tarifa R$</th>
+                    <th style={{ padding: "6px 6px" }}>Frete R$</th>
+                    <th style={{ padding: "6px 6px" }}>Reserva</th>
+                  </tr></thead>
+                  <tbody>
+                    {input.canaisCustom.map((c, idx) => {
+                      const upd = (campo, val) => {
+                        const novo = input.canaisCustom.map((x, i) => i === idx ? { ...x, [campo]: val } : x);
+                        set("canaisCustom", novo);
+                      };
+                      const inp = (campo, val) => (
+                        <input type="text" inputMode="decimal" defaultValue={String(val).replace(".",",")}
+                          onBlur={(e) => { const n = parseFloat(e.target.value.replace(",",".")); if (!isNaN(n)) upd(campo, n); }}
+                          style={{ width: 64, background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "4px 6px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", textAlign: "right" }} />
+                      );
+                      return (
+                        <tr key={c.nome} style={{ borderTop: `1px solid ${C.line}` }}>
+                          <td style={{ padding: "6px 6px", fontWeight: 600 }}>{c.nome}</td>
+                          <td style={{ padding: "6px 6px" }}>{inp("comissao", c.comissao)}</td>
+                          <td style={{ padding: "6px 6px" }}>{inp("pgto", c.pgto)}</td>
+                          <td style={{ padding: "6px 6px" }}>{inp("ads", c.ads)}</td>
+                          <td style={{ padding: "6px 6px" }}>{inp("tarifa", c.tarifa)}</td>
+                          <td style={{ padding: "6px 6px" }}>{inp("frete", c.frete)}</td>
+                          <td style={{ padding: "6px 6px" }}>{inp("seg", c.seg)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <Hint>Valores decimais: comissão 16% = 0.16 · Tarifa e Frete em R$ · Clique fora do campo para aplicar.</Hint>
+              </div>
+            )}
+
             <div style={{ marginTop: 16, padding: "14px", borderRadius: 12, background: C.panel2 }}>
               <Label>Preço que será praticado — {r.canalRef}</Label>
               <F label="Preço de venda" value={input.precoPraticado || round2(r.precoSaudavel)} step={0.1} onChange={(v) => set("precoPraticado", v)} suffix="R$" />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4 }}>
-                <span style={{ color: C.sub }}>Lucro líquido: <b style={{ color: r.lucroPraticado >= 0 ? C.good : C.bad }}>{brl(r.lucroPraticado)}</b></span>
-                <span style={{ fontWeight: 700, color: statusColor }}>{r.status} · {pct(r.margemAtual)}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4, flexWrap: "wrap", gap: 6 }}>
+                <span style={{ color: C.sub }}>Lucro líquido: <b style={{ color: r.lucroPraticado >= 0 ? C.good : C.bad }}>{brl(r.lucroPraticado)}</b>
+                  {" · "}{pct(r.margemAtual)}
+                  {input.lucroAlvoModo === "rs" && r.lucroPraticado < input.lucroAlvoValor &&
+                    <span style={{ color: C.warn, marginLeft: 6 }}>(meta: {brl(input.lucroAlvoValor)})</span>}
+                  {input.lucroAlvoModo === "pct" && r.margemAtual < input.lucroAlvoValor &&
+                    <span style={{ color: C.warn, marginLeft: 6 }}>(meta: {pct(input.lucroAlvoValor)})</span>}
+                </span>
+                <span style={{ fontWeight: 700, color: statusColor }}>{r.status}</span>
               </div>
             </div>
 
