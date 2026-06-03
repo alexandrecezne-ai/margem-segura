@@ -9,17 +9,30 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>html,body{margin:0;padding:0;background:#0e1014;}#root{min-height:100vh;}</style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-  // Inicializa EmailJS antes do React
+  // Inicializa EmailJS
   (function() {
     if (typeof emailjs !== "undefined") {
       emailjs.init({ publicKey: "nFx5yYyz7ngpM9p5f" });
     }
   })();
+  // Inicializa Firebase
+  const firebaseConfig = {
+    apiKey: "AIzaSyCRIFDRC-BOnldFiaYG9x2zpdML6ia7UlY",
+    authDomain: "margem-segura.firebaseapp.com",
+    projectId: "margem-segura",
+    storageBucket: "margem-segura.firebasestorage.app",
+    messagingSenderId: "539166140538",
+    appId: "1:539166140538:web:6bacccc5f892ba5fe7f3c3"
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  window._db = firebase.firestore();
 </script>
 <script type="text/babel" data-presets="react">
 // ===================== CONFIG EMAILJS =====================
@@ -110,86 +123,93 @@ const pct = (n) => `${((isFinite(n) ? n : 0) * 100).toFixed(1)}%`;
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const hoje = () => new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
-// ===================== GESTÃO DE USUÁRIOS =====================
+// ===================== GESTÃO DE USUÁRIOS (Firestore) =====================
 function emailParaKey(email) { if (!email) return ""; return email.toLowerCase().replace(/[^a-z0-9]/g, "_"); }
-function getUsuarios() { try { const all = JSON.parse(localStorage.getItem("ms3d_users") || "[]"); return all.filter((u) => u && u.email); } catch { return []; } }
-function saveUsuarios(list) { localStorage.setItem("ms3d_users", JSON.stringify(list.filter((u) => u && u.email))); }
+const db = () => window._db;
+const usersCol = () => db().collection("users");
+const userDoc = (email) => usersCol().doc(emailParaKey(email));
 
-function loginUsuario(email, senha) {
-  const users = getUsuarios();
-  const u = users.find((u) => u.email === email.toLowerCase() && u.senha === senha);
-  if (!u) return { ok: false, erro: "E-mail ou senha incorretos." };
-  if (!u.verificado) return { ok: false, erro: "E-mail ainda não verificado.", pendente: true, email: u.email };
-  return { ok: true, user: u };
+function getUsuarios() {
+  return usersCol().get().then((snap) => snap.docs.map((d) => d.data()).filter((u) => u && u.email));
+}
+
+function getUsuario(email) {
+  return userDoc(email).get().then((d) => d.exists ? d.data() : null);
+}
+
+function getUsuarioByKey(key) {
+  return usersCol().doc(key).get().then((d) => d.exists ? d.data() : null);
+}
+
+function saveUsuario(data) {
+  return userDoc(data.email).set(data);
+}
+
+function updateUsuario(email, patch) {
+  return userDoc(email).update(patch);
 }
 
 function gerarCodigo() { return String(Math.floor(100000 + Math.random() * 900000)); }
 
+function loginUsuario(email, senha) {
+  return getUsuario(email).then((u) => {
+    if (!u || u.senha !== senha) return { ok: false, erro: "E-mail ou senha incorretos." };
+    if (!u.verificado) return { ok: false, erro: "E-mail ainda não verificado.", pendente: true, email: u.email };
+    return { ok: true, user: u };
+  });
+}
+
 function cadastrarUsuario(email, senha) {
-  const users = getUsuarios();
-  if (users.find((u) => u.email === email.toLowerCase())) return { ok: false, erro: "Este e-mail já está cadastrado." };
-  const codigo = gerarCodigo();
-  const expira = Date.now() + 30 * 60 * 1000; // 30 min
-  users.push({ email: email.toLowerCase(), senha, verificado: false, codigo, codigoExpira: expira, plano: "Free", criadoEm: new Date().toLocaleDateString("pt-BR") });
-  saveUsuarios(users);
-  return { ok: true, codigo, email: email.toLowerCase() };
+  return getUsuario(email).then((existing) => {
+    if (existing) return { ok: false, erro: "Este e-mail já está cadastrado." };
+    const codigo = gerarCodigo();
+    const user = { email: email.toLowerCase(), senha, verificado: false, codigo,
+      codigoExpira: Date.now() + 30 * 60 * 1000, plano: "Free",
+      criadoEm: new Date().toLocaleDateString("pt-BR") };
+    return saveUsuario(user).then(() => ({ ok: true, codigo, email: user.email }));
+  });
 }
 
 function verificarCodigo(email, codigo) {
-  const users = getUsuarios();
-  const idx = users.findIndex((u) => u.email === email.toLowerCase());
-  if (idx === -1) return { ok: false, erro: "Usuário não encontrado." };
-  const u = users[idx];
-  if (u.verificado) return { ok: true };
-  if (Date.now() > u.codigoExpira) return { ok: false, erro: "Código expirado. Cadastre-se novamente." };
-  if (u.codigo !== codigo.trim()) return { ok: false, erro: "Código incorreto." };
-  users[idx] = { ...u, verificado: true, codigo: null };
-  saveUsuarios(users);
-  return { ok: true };
-}
-
-function solicitarResetSenha(email) {
-  const users = getUsuarios();
-  const idx = users.findIndex((u) => u.email === email.toLowerCase());
-  if (idx === -1) return null; // não revela se e-mail existe
-  const codigo = gerarCodigo();
-  users[idx] = { ...users[idx], codigoReset: codigo, codigoResetExpira: Date.now() + 30 * 60 * 1000 };
-  saveUsuarios(users);
-  return { codigo, email: users[idx].email };
-}
-
-function confirmarResetSenha(email, codigo, novaSenha) {
-  const users = getUsuarios();
-  const idx = users.findIndex((u) => u.email === email.toLowerCase());
-  if (idx === -1) return { ok: false, erro: "E-mail não encontrado." };
-  const u = users[idx];
-  if (!u.codigoReset || u.codigoReset !== codigo.trim()) return { ok: false, erro: "Código incorreto." };
-  if (Date.now() > u.codigoResetExpira) return { ok: false, erro: "Código expirado. Solicite um novo." };
-  users[idx] = { ...u, senha: novaSenha, codigoReset: null, codigoResetExpira: null };
-  saveUsuarios(users);
-  return { ok: true };
+  return getUsuario(email).then((u) => {
+    if (!u) return { ok: false, erro: "Usuário não encontrado." };
+    if (u.verificado) return { ok: true };
+    if (Date.now() > u.codigoExpira) return { ok: false, erro: "Código expirado. Cadastre-se novamente." };
+    if (u.codigo !== codigo.trim()) return { ok: false, erro: "Código incorreto." };
+    return updateUsuario(email, { verificado: true, codigo: null }).then(() => ({ ok: true }));
+  });
 }
 
 function reenviarCodigo(email) {
-  const users = getUsuarios();
-  const idx = users.findIndex((u) => u.email === email.toLowerCase());
-  if (idx === -1) return null;
   const codigo = gerarCodigo();
-  users[idx] = { ...users[idx], codigo, codigoExpira: Date.now() + 30 * 60 * 1000 };
-  saveUsuarios(users);
-  return codigo;
+  return updateUsuario(email, { codigo, codigoExpira: Date.now() + 30 * 60 * 1000 }).then(() => codigo);
+}
+
+function solicitarResetSenha(email) {
+  return getUsuario(email).then((u) => {
+    if (!u) return null;
+    const codigo = gerarCodigo();
+    return updateUsuario(email, { codigoReset: codigo, codigoResetExpira: Date.now() + 30 * 60 * 1000 })
+      .then(() => ({ codigo, email: u.email }));
+  });
+}
+
+function confirmarResetSenha(email, codigo, novaSenha) {
+  return getUsuario(email).then((u) => {
+    if (!u) return { ok: false, erro: "E-mail não encontrado." };
+    if (!u.codigoReset || u.codigoReset !== codigo.trim()) return { ok: false, erro: "Código incorreto." };
+    if (Date.now() > u.codigoResetExpira) return { ok: false, erro: "Código expirado. Solicite um novo." };
+    return updateUsuario(email, { senha: novaSenha, codigoReset: null, codigoResetExpira: null })
+      .then(() => ({ ok: true }));
+  });
 }
 
 function getUserPlano(email) {
-  const users = getUsuarios();
-  const u = users.find((u) => u.email === email.toLowerCase());
-  return u ? u.plano : "Free";
+  return getUsuario(email).then((u) => u ? (u.plano || "Free") : "Free");
 }
 
 function setUserPlano(email, plano) {
-  const users = getUsuarios();
-  const idx = users.findIndex((u) => u.email === email.toLowerCase());
-  if (idx !== -1) { users[idx].plano = plano; saveUsuarios(users); }
+  return updateUsuario(email, { plano });
 }
 
 function enviarEmailReset(email, codigo) {
@@ -217,24 +237,16 @@ function enviarEmailVerificacao(email, codigo) {
 function isAdmin(email) { return email && email.toLowerCase() === ADMIN_EMAIL.toLowerCase(); }
 
 function adminDeletarUsuario(email) {
-  const users = getUsuarios().filter((u) => u.email !== email.toLowerCase());
-  saveUsuarios(users);
-  // limpa dados do usuário
-  zerarUsuario(emailParaKey(email));
+  return userDoc(email).delete().then(() => { zerarUsuario(emailParaKey(email)); });
 }
 
 function adminResetarSenha(email) {
-  const users = getUsuarios();
-  const idx = users.findIndex((u) => u.email === email.toLowerCase());
-  if (idx === -1) return null;
   const nova = Math.random().toString(36).slice(-8);
-  users[idx] = { ...users[idx], senha: nova };
-  saveUsuarios(users);
-  return nova;
+  return updateUsuario(email, { senha: nova }).then(() => nova);
 }
 
 function adminAlterarPlano(email, plano) {
-  setUserPlano(email, plano);
+  return setUserPlano(email, plano);
 }
 
 function zerarUsuario(userKey) {
@@ -485,10 +497,14 @@ function App({ userKey = "default", onLogout }) {
   };
 
   const [tab, setTab] = React.useState("dashboard");
-  const [plan, setPlan] = React.useState(() => getUserPlano(userKey) || LS("plan", "Free"));
-  const adminMode = React.useMemo(() => {
-    const u = getUsuarios().find((x) => x.email && emailParaKey(x.email) === userKey);
-    return u ? isAdmin(u.email) : false;
+  const [plan, setPlan] = React.useState(LS("plan", "Free"));
+  const [adminMode, setAdminMode] = React.useState(false);
+  React.useEffect(() => {
+    getUsuarioByKey(userKey).then((u) => {
+      if (!u) return;
+      if (u.plano && u.plano !== plan) setPlan(u.plano);
+      setAdminMode(isAdmin(u.email));
+    });
   }, [userKey]);
   const acessos = PLAN_ACCESS[plan] || PLAN_ACCESS["Free"];
   const canAccess = (tabId) => tabId === "admin" ? adminMode : acessos.includes(tabId);
@@ -501,7 +517,10 @@ function App({ userKey = "default", onLogout }) {
   const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
   const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
 
-  React.useEffect(() => { save("plan", plan); setUserPlano(userKey, plan); }, [plan]);
+  React.useEffect(() => {
+    save("plan", plan);
+    getUsuarioByKey(userKey).then((u) => { if (u) updateUsuario(u.email, { plano: plan }); });
+  }, [plan]);
   React.useEffect(() => save("produtos", produtos), [produtos]);
   React.useEffect(() => save("insumos", insumos), [insumos]);
   React.useEffect(() => save("maquinas", maquinas), [maquinas]);
@@ -1903,36 +1922,35 @@ function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout }) {
 // ============================================================
 // ---------- PAINEL ADMIN ----------
 function AdminPanel() {
-  const [users, setUsers] = React.useState(getUsuarios());
-  const [senhaReset, setSenhaReset] = React.useState(null); // { email, senha }
-  const [confirm, setConfirm] = React.useState(null); // { email, acao }
+  const [users, setUsers] = React.useState([]);
+  const [loadingUsers, setLoadingUsers] = React.useState(true);
+  const [senhaReset, setSenhaReset] = React.useState(null);
+  const [confirm, setConfirm] = React.useState(null);
   const planos = ["Free", "Pro", "Studio"];
 
-  const refresh = () => setUsers(getUsuarios());
+  const refresh = () => {
+    setLoadingUsers(true);
+    getUsuarios().then((list) => { setUsers(list); setLoadingUsers(false); });
+  };
+
+  React.useEffect(() => { refresh(); }, []);
 
   const handleAlterarPlano = (email, plano) => {
-    adminAlterarPlano(email, plano);
-    refresh();
+    adminAlterarPlano(email, plano).then(refresh);
   };
 
-  const handleDeletar = (email) => {
-    setConfirm({ email, acao: "deletar" });
-  };
-
-  const handleResetar = (email) => {
-    setConfirm({ email, acao: "resetar" });
-  };
+  const handleDeletar = (email) => { setConfirm({ email, acao: "deletar" }); };
+  const handleResetar = (email) => { setConfirm({ email, acao: "resetar" }); };
 
   const confirmarAcao = () => {
     if (!confirm) return;
     if (confirm.acao === "deletar") {
-      adminDeletarUsuario(confirm.email);
-      refresh();
-      setConfirm(null);
+      adminDeletarUsuario(confirm.email).then(() => { refresh(); setConfirm(null); });
     } else if (confirm.acao === "resetar") {
-      const nova = adminResetarSenha(confirm.email);
-      setSenhaReset({ email: confirm.email, senha: nova });
-      setConfirm(null);
+      adminResetarSenha(confirm.email).then((nova) => {
+        setSenhaReset({ email: confirm.email, senha: nova });
+        setConfirm(null);
+      });
     }
   };
 
@@ -1975,7 +1993,10 @@ function AdminPanel() {
         <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 1.5fr", padding: "10px 16px", borderBottom: `1px solid ${C.line}`, fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
           <span>E-mail</span><span>Plano</span><span>Status</span><span>Cadastro</span><span style={{ textAlign: "right" }}>Ações</span>
         </div>
-        {users.length === 0 && (
+        {loadingUsers && (
+          <div style={{ padding: 24, textAlign: "center", color: C.sub, fontSize: 14 }}>⏳ Carregando usuários...</div>
+        )}
+        {!loadingUsers && users.length === 0 && (
           <div style={{ padding: 24, textAlign: "center", color: C.sub, fontSize: 14 }}>Nenhum usuário cadastrado.</div>
         )}
         {users.map((u) => (
@@ -2176,13 +2197,16 @@ function LoginScreen({ onLogin }) {
   const handleLogin = () => {
     setErro("");
     if (!email.trim() || !senha) { setErro("Preencha e-mail e senha."); return; }
-    const res = loginUsuario(email.trim(), senha);
-    if (!res.ok) {
-      if (res.pendente) { setPendEmail(res.email); setModo("verificar"); }
-      else setErro(res.erro);
-      return;
-    }
-    onLogin(res.user.email);
+    setLoading(true);
+    loginUsuario(email.trim(), senha).then((res) => {
+      setLoading(false);
+      if (!res.ok) {
+        if (res.pendente) { setPendEmail(res.email); setModo("verificar"); }
+        else setErro(res.erro);
+        return;
+      }
+      onLogin(res.user.email);
+    }).catch(() => { setLoading(false); setErro("Erro de conexão. Tente novamente."); });
   };
 
   const handleCadastro = () => {
@@ -2205,36 +2229,40 @@ function LoginScreen({ onLogin }) {
   const handleVerificar = () => {
     setErro("");
     if (!codigo.trim()) { setErro("Digite o código de verificação."); return; }
-    const res = verificarCodigo(pendEmail, codigo);
-    if (!res.ok) { setErro(res.erro); return; }
-    onLogin(pendEmail);
+    setLoading(true);
+    verificarCodigo(pendEmail, codigo).then((res) => {
+      setLoading(false);
+      if (!res.ok) { setErro(res.erro); return; }
+      onLogin(pendEmail);
+    }).catch(() => { setLoading(false); setErro("Erro de conexão. Tente novamente."); });
   };
 
   const handleReenviar = () => {
     setErro("");
     setLoading(true);
-    const novoCodigo = reenviarCodigo(pendEmail);
-    enviarEmailVerificacao(pendEmail, novoCodigo).then((enviou) => {
-      setLoading(false);
-      setCodigoGerado(enviou ? null : novoCodigo);
-      setErro("Novo código gerado.");
-    });
+    reenviarCodigo(pendEmail).then((novoCodigo) => {
+      return enviarEmailVerificacao(pendEmail, novoCodigo).then((enviou) => {
+        setLoading(false);
+        setCodigoGerado(enviou ? null : novoCodigo);
+        setErro("Novo código enviado.");
+      });
+    }).catch(() => { setLoading(false); setErro("Erro ao reenviar. Tente novamente."); });
   };
 
   const handleSolicitarReset = () => {
     setErro("");
     if (!email.trim()) { setErro("Digite seu e-mail."); return; }
     setLoading(true);
-    const res = solicitarResetSenha(email.trim());
-    const cod = res ? res.codigo : gerarCodigo(); // se email não existe, gera código fake (segurança)
-    const emailDest = res ? res.email : email.trim();
-    enviarEmailReset(emailDest, cod).then((enviou) => {
-      setLoading(false);
-      setPendEmail(email.trim());
-      setCodigoGerado(enviou || !res ? null : cod);
-      setModo("reset-codigo");
-      setErro("");
-    });
+    solicitarResetSenha(email.trim()).then((res) => {
+      const cod = res ? res.codigo : gerarCodigo();
+      const emailDest = res ? res.email : email.trim();
+      return enviarEmailReset(emailDest, cod).then((enviou) => {
+        setLoading(false);
+        setPendEmail(email.trim());
+        setCodigoGerado(enviou || !res ? null : cod);
+        setModo("reset-codigo");
+      });
+    }).catch(() => { setLoading(false); setErro("Erro de conexão. Tente novamente."); });
   };
 
   const handleConfirmarReset = () => {
@@ -2242,12 +2270,12 @@ function LoginScreen({ onLogin }) {
     if (!codigo.trim()) { setErro("Digite o código recebido por e-mail."); return; }
     if (!novaSenha || novaSenha.length < 6) { setErro("A nova senha deve ter ao menos 6 caracteres."); return; }
     if (novaSenha !== novaSenha2) { setErro("As senhas não coincidem."); return; }
-    const res = confirmarResetSenha(pendEmail, codigo, novaSenha);
-    if (!res.ok) { setErro(res.erro); return; }
-    setErro("");
-    setModo("login");
-    setSenha("");
-    setEmail(pendEmail);
+    setLoading(true);
+    confirmarResetSenha(pendEmail, codigo, novaSenha).then((res) => {
+      setLoading(false);
+      if (!res.ok) { setErro(res.erro); return; }
+      setModo("login"); setSenha(""); setEmail(pendEmail);
+    }).catch(() => { setLoading(false); setErro("Erro de conexão. Tente novamente."); });
   };
 
   return (
