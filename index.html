@@ -159,13 +159,13 @@ function loginUsuario(email, senha) {
   });
 }
 
-function cadastrarUsuario(email, senha) {
+function cadastrarUsuario(email, senha, nome) {
   return getUsuario(email).then((existing) => {
     if (existing) return { ok: false, erro: "Este e-mail já está cadastrado." };
     const codigo = gerarCodigo();
-    const user = { email: email.toLowerCase(), senha, verificado: false, codigo,
-      codigoExpira: Date.now() + 30 * 60 * 1000, plano: "Free",
-      criadoEm: new Date().toLocaleDateString("pt-BR") };
+    const user = { email: email.toLowerCase(), senha, nome: nome || email.split("@")[0],
+      verificado: false, codigo, codigoExpira: Date.now() + 30 * 60 * 1000,
+      plano: "Free", criadoEm: new Date().toLocaleDateString("pt-BR") };
     return saveUsuario(user).then(() => ({ ok: true, codigo, email: user.email }));
   });
 }
@@ -524,11 +524,13 @@ function App({ userKey = "default", onLogout }) {
   const [tab, setTab] = React.useState("dashboard");
   const [plan, setPlan] = React.useState(LS("plan", "Free"));
   const [adminMode, setAdminMode] = React.useState(false);
+  const [nomeUsuario, setNomeUsuario] = React.useState("");
   React.useEffect(() => {
     getUsuarioByKey(userKey).then((u) => {
       if (!u) return;
       if (u.plano && u.plano !== plan) setPlan(u.plano);
       setAdminMode(isAdmin(u.email));
+      if (u.nome) setNomeUsuario(u.nome);
     });
   }, [userKey]);
   const acessos = PLAN_ACCESS[plan] || PLAN_ACCESS["Free"];
@@ -775,9 +777,9 @@ function App({ userKey = "default", onLogout }) {
           <div style={{ fontSize: 11, color: C.sub }}>Plano atual</div>
           <div style={{ fontWeight: 700, color: C.accent, fontFamily: "Sora" }}>{plan} <span style={{ fontSize: 11, color: C.sub, fontWeight: 400 }}>· gerenciar</span></div>
         </button>
-        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${adminMode ? C.accent : C.line}`, borderRadius: 10, fontSize: 11, color: C.sub, wordBreak: "break-all" }}>
+        <div style={{ marginTop: 10, padding: "8px 12px", background: C.panel2, border: `1px solid ${adminMode ? C.accent : C.line}`, borderRadius: 10, fontSize: 11, color: C.sub }}>
           {adminMode && <div style={{ fontSize: 10, fontWeight: 800, color: C.accent, marginBottom: 3, letterSpacing: 1 }}>🛡 ADMINISTRADOR</div>}
-          <span style={{ fontWeight: 600, color: C.ink }}>👤 {userKey}</span>
+          <div style={{ fontWeight: 700, color: C.ink, fontSize: 13 }}>👤 {nomeUsuario || userKey}</div>
         </div>
         {onLogout && (
           <button onClick={() => { if (confirm("Sair da conta? Seus dados ficam salvos.")) onLogout(); }}
@@ -2029,8 +2031,8 @@ function AdminPanel() {
       )}
 
       <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 1.5fr", padding: "10px 16px", borderBottom: `1px solid ${C.line}`, fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
-          <span>E-mail</span><span>Plano</span><span>Status</span><span>Cadastro</span><span style={{ textAlign: "right" }}>Ações</span>
+        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1.5fr 1fr 1fr 1fr 1.5fr", padding: "10px 16px", borderBottom: `1px solid ${C.line}`, fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>
+          <span>Nome/Empresa</span><span>E-mail</span><span>Plano</span><span>Status</span><span>Cadastro</span><span style={{ textAlign: "right" }}>Ações</span>
         </div>
         {loadingUsers && (
           <div style={{ padding: 24, textAlign: "center", color: C.sub, fontSize: 14 }}>⏳ Carregando usuários...</div>
@@ -2039,11 +2041,12 @@ function AdminPanel() {
           <div style={{ padding: 24, textAlign: "center", color: C.sub, fontSize: 14 }}>Nenhum usuário cadastrado.</div>
         )}
         {users.map((u) => (
-          <div key={u.email} style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 1.5fr", padding: "12px 16px", borderBottom: `1px solid ${C.line}`, alignItems: "center", fontSize: 13 }}>
-            <div style={{ wordBreak: "break-all" }}>
+          <div key={u.email} style={{ display: "grid", gridTemplateColumns: "1.5fr 1.5fr 1fr 1fr 1fr 1.5fr", padding: "12px 16px", borderBottom: `1px solid ${C.line}`, alignItems: "center", fontSize: 13 }}>
+            <div style={{ fontWeight: 600 }}>
               {isAdmin(u.email) && <span style={{ fontSize: 10, fontWeight: 800, color: C.accent, background: `${C.accent}22`, padding: "1px 6px", borderRadius: 6, marginRight: 6 }}>ADMIN</span>}
-              {u.email}
+              {u.nome || "—"}
             </div>
+            <div style={{ wordBreak: "break-all", fontSize: 11, color: C.sub }}>{u.email}</div>
             <div>
               <select value={u.plano || "Free"} onChange={(e) => handleAlterarPlano(u.email, e.target.value)}
                 disabled={isAdmin(u.email)}
@@ -2218,9 +2221,18 @@ function LoginApp() {
   return <App userKey={session} onLogout={handleLogout} />;
 }
 
+function useNomeUsuario(userKey) {
+  const [nome, setNome] = React.useState("");
+  React.useEffect(() => {
+    getUsuarioByKey(userKey).then((u) => { if (u && u.nome) setNome(u.nome); });
+  }, [userKey]);
+  return nome;
+}
+
 function LoginScreen({ onLogin }) {
   const [modo, setModo] = React.useState("login"); // "login" | "cadastro" | "verificar" | "reset" | "reset-codigo"
   const [email, setEmail] = React.useState("");
+  const [nome, setNome] = React.useState("");
   const [senha, setSenha] = React.useState("");
   const [senha2, setSenha2] = React.useState("");
   const [codigo, setCodigo] = React.useState("");
@@ -2252,11 +2264,12 @@ function LoginScreen({ onLogin }) {
     setErro("");
     if (!email.trim() || !senha || !senha2) { setErro("Preencha todos os campos."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro("Digite um e-mail válido."); return; }
+    if (!nome.trim()) { setErro("Informe seu nome ou empresa."); return; }
     if (senha.length < 6) { setErro("A senha deve ter ao menos 6 caracteres."); return; }
     if (senha !== senha2) { setErro("As senhas não coincidem."); return; }
     setLoading(true);
     setErro("Conectando ao servidor...");
-    cadastrarUsuario(email.trim(), senha).then((res) => {
+    cadastrarUsuario(email.trim(), senha, nome.trim()).then((res) => {
       if (!res.ok) { setLoading(false); setErro(res.erro); return; }
       setErro("Conta criada! Enviando código...");
       return enviarEmailVerificacao(res.email, res.codigo).then((enviou) => {
@@ -2418,10 +2431,17 @@ function LoginScreen({ onLogin }) {
             ))}
           </div>
 
+          {modo === "cadastro" && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Nome / Empresa</div>
+              <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Seu nome ou nome da empresa"
+                autoFocus style={estiloInput} />
+            </div>
+          )}
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>E-mail</div>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu@email.com"
-              autoFocus style={estiloInput} />
+              autoFocus={modo === "login"} style={estiloInput} />
           </div>
           <div style={{ marginBottom: modo === "cadastro" ? 14 : 20 }}>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Senha</div>
