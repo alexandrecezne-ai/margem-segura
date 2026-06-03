@@ -249,9 +249,33 @@ function adminAlterarPlano(email, plano) {
   return setUserPlano(email, plano);
 }
 
+// ===================== ERP NO FIRESTORE =====================
+const erpDoc = (userKey) => db().collection("erp").doc(userKey);
+const ERP_KEYS = ["produtos","insumos","maquinas","orcamentos","pedidos","cond"];
+
+function loadErp(userKey) {
+  return erpDoc(userKey).get().then((d) => {
+    if (!d.exists) return {};
+    const raw = d.data();
+    const result = {};
+    ERP_KEYS.forEach((k) => {
+      if (raw[k] !== undefined) {
+        try { result[k] = typeof raw[k] === "string" ? JSON.parse(raw[k]) : raw[k]; }
+        catch { /* ignora */ }
+      }
+    });
+    return result;
+  });
+}
+
+function saveErpField(userKey, field, value) {
+  return erpDoc(userKey).set({ [field]: JSON.stringify(value) }, { merge: true }).catch(() => {});
+}
+
 function zerarUsuario(userKey) {
   const PFX = `ms3d_${userKey}_`;
   ["produtos","insumos","maquinas","orcamentos","pedidos","cond","plan","version"].forEach((k) => localStorage.removeItem(PFX + k));
+  if (window._db) erpDoc(userKey).delete().catch(() => {});
 }
 
 // monta o texto do orçamento (compartilhado por WhatsApp e PDF)
@@ -492,7 +516,8 @@ function App({ userKey = "default", onLogout }) {
   };
   const save = (k, v) => { try { localStorage.setItem(PFX + k, JSON.stringify(v)); } catch {} };
   const resetDados = () => {
-    ["produtos", "insumos", "maquinas", "orcamentos", "pedidos", "cond"].forEach((k) => localStorage.removeItem(PFX + k));
+    ["produtos","insumos","maquinas","orcamentos","pedidos","cond"].forEach((k) => localStorage.removeItem(PFX + k));
+    erpDoc(userKey).delete().catch(() => {});
     setProdutos(PRODUTOS_SEED); setInsumos(INSUMOS_SEED); setMaquinas(MAQUINAS_SEED); setOrcamentos(ORC_SEED); setPedidos(PEDIDOS_SEED); setCond(COND_SEED);
   };
 
@@ -516,17 +541,31 @@ function App({ userKey = "default", onLogout }) {
   const [orcamentos, setOrcamentos] = React.useState(() => LS("orcamentos", ORC_SEED));
   const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
   const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
+  const erpReady = React.useRef(false);
+
+  // Carrega dados do Firestore ao logar
+  React.useEffect(() => {
+    erpReady.current = false;
+    loadErp(userKey).then((data) => {
+      if (data.produtos !== undefined) setProdutos(data.produtos);
+      if (data.insumos !== undefined) setInsumos(data.insumos);
+      if (data.maquinas !== undefined) setMaquinas(data.maquinas);
+      if (data.orcamentos !== undefined) setOrcamentos(data.orcamentos);
+      if (data.pedidos !== undefined) setPedidos(data.pedidos);
+      if (data.cond !== undefined) setCond(data.cond);
+    }).finally(() => { erpReady.current = true; });
+  }, [userKey]);
 
   React.useEffect(() => {
     save("plan", plan);
     getUsuarioByKey(userKey).then((u) => { if (u) updateUsuario(u.email, { plano: plan }); });
   }, [plan]);
-  React.useEffect(() => save("produtos", produtos), [produtos]);
-  React.useEffect(() => save("insumos", insumos), [insumos]);
-  React.useEffect(() => save("maquinas", maquinas), [maquinas]);
-  React.useEffect(() => save("orcamentos", orcamentos), [orcamentos]);
-  React.useEffect(() => save("cond", cond), [cond]);
-  React.useEffect(() => save("pedidos", pedidos), [pedidos]);
+  React.useEffect(() => { save("produtos", produtos); if (erpReady.current) saveErpField(userKey, "produtos", produtos); }, [produtos]);
+  React.useEffect(() => { save("insumos", insumos); if (erpReady.current) saveErpField(userKey, "insumos", insumos); }, [insumos]);
+  React.useEffect(() => { save("maquinas", maquinas); if (erpReady.current) saveErpField(userKey, "maquinas", maquinas); }, [maquinas]);
+  React.useEffect(() => { save("orcamentos", orcamentos); if (erpReady.current) saveErpField(userKey, "orcamentos", orcamentos); }, [orcamentos]);
+  React.useEffect(() => { save("cond", cond); if (erpReady.current) saveErpField(userKey, "cond", cond); }, [cond]);
+  React.useEffect(() => { save("pedidos", pedidos); if (erpReady.current) saveErpField(userKey, "pedidos", pedidos); }, [pedidos]);
 
   // ===================== CALCULADORA (estado de trabalho) =====================
   const [input, setInput] = React.useState({
