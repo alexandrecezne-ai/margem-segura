@@ -13,14 +13,22 @@
 </head>
 <body>
 <div id="root"></div>
+<script>
+  // Inicializa EmailJS antes do React
+  (function() {
+    if (typeof emailjs !== "undefined") {
+      emailjs.init({ publicKey: "nFx5yYyz7ngpM9p5f" });
+    }
+  })();
+</script>
 <script type="text/babel" data-presets="react">
 // ===================== CONFIG EMAILJS =====================
 // Para enviar e-mails reais: crie conta em emailjs.com, configure um serviço Gmail e um template.
 // O template deve conter as variáveis: {{to_email}}, {{codigo}}, {{nome}}
-const EMAILJS_PUBLIC_KEY  = "SEU_PUBLIC_KEY";   // Account > API Keys
-const EMAILJS_SERVICE_ID  = "SEU_SERVICE_ID";   // Email Services
-const EMAILJS_TEMPLATE_ID = "SEU_TEMPLATE_ID";  // Email Templates
-const EMAILJS_CONFIGURADO = false; // mude para true após configurar as chaves acima
+const EMAILJS_PUBLIC_KEY  = "nFx5yYyz7ngpM9p5f";
+const EMAILJS_SERVICE_ID  = "service_rgpl7ql";
+const EMAILJS_TEMPLATE_ID = "template_bwazzok";
+const EMAILJS_CONFIGURADO = true;
 
 // ===================== CONSTANTES E DADOS =====================
 const C = { bg: "#0e1014", panel: "#171a21", panel2: "#1e222b", line: "#2a2f3a",
@@ -164,8 +172,11 @@ function setUserPlano(email, plano) {
 
 function enviarEmailVerificacao(email, codigo) {
   if (!EMAILJS_CONFIGURADO) return Promise.resolve(false);
+  const agora = new Date();
+  const expira = new Date(agora.getTime() + 30 * 60000);
+  const time = expira.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
-    { to_email: email, codigo, nome: email.split("@")[0] },
+    { email: email, passcode: codigo, time: time },
     EMAILJS_PUBLIC_KEY
   ).then(() => true).catch(() => false);
 }
