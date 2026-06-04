@@ -813,8 +813,8 @@ function App({ userKey = "default", onLogout }) {
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} />}
         {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} />}
-        {tab === "roas" && <Roas r={r} />}
-        {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} />}
+        {tab === "roas" && <Roas r={r} produtos={produtos} />}
+        {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} produtos={produtos} />}
         {tab === "academia" && <Academia go={setTab} plan={plan} />}
         {tab === "admin" && adminMode && <AdminPanel />}
       </main>
@@ -2290,21 +2290,124 @@ function Insumos({ insumos, setInsumos }) {
 }
 
 // ---------- ROAS ----------
-function Roas({ r }) {
+// ---- Calculo a partir de produto do catálogo ----
+function calcFromCatalogo(produto, canalNome, precoCustom) {
+  const canal = CANAIS.find((c) => c.nome === canalNome) || CANAIS[0];
+  const taxaImposto = produto.impostoTaxa || 0;
+  const usarAds = produto.usarAds !== false;
+  const usarSeg = produto.usarSeg !== false;
+  const ads = usarAds ? canal.ads : 0;
+  const seg = usarSeg ? canal.seg : 0;
+  const totalPct = canal.comissao + canal.pgto + ads + taxaImposto + seg;
+  const baseMaisTarifa = (produto.custo || 0) + (canal.tarifa || 0) + (canal.frete || 0);
+  const precoMinimo = totalPct < 1 ? baseMaisTarifa / (1 - totalPct) : baseMaisTarifa * 2;
+  const precoSaudavel = produto.precoSaudavel || precoMinimo * 1.3;
+  const precoPraticado = precoCustom > 0 ? precoCustom : (produto.precoPraticado || precoSaudavel);
+  const lucro = precoPraticado - baseMaisTarifa - precoPraticado * totalPct;
+  const margem = precoPraticado > 0 ? lucro / precoPraticado : 0;
+  const lucroHora = produto.horasImpressao > 0 ? lucro / produto.horasImpressao : null;
+  const pctSemAds = canal.comissao + canal.pgto + taxaImposto + seg;
+  const custoSemAds = baseMaisTarifa + precoPraticado * pctSemAds;
+  const margemAntesAds = precoPraticado > 0 ? (precoPraticado - custoSemAds) / precoPraticado : 0;
+  const acosMax = Math.max(0, margemAntesAds - 0.12);
+  const roasMeta = acosMax > 0 ? 1 / acosMax : 0;
+  const investMaxVenda = precoPraticado * acosMax;
+  const status = precoPraticado >= precoSaudavel ? "Saudável" : precoPraticado >= precoMinimo ? "Apertado" : "Inviável";
+  const statusColor = status === "Saudável" ? C.good : status === "Apertado" ? C.warn : C.bad;
+  return { canal, totalPct, baseMaisTarifa, precoMinimo, precoSaudavel, precoPraticado, lucro, margem, lucroHora, margemAntesAds, acosMax, roasMeta, investMaxVenda, status, statusColor, usarAds, usarSeg, taxaImposto, produto };
+}
+
+function SeletorProduto({ produtos, sku, setSku, canalNome, setCanalNome, preco, setPreco, label }) {
+  const prod = produtos.find((p) => p.sku === sku);
+  const estiloSel = { background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit", width: "100%" };
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <Label>{label || "Produto do catálogo"}</Label>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12, alignItems: "end" }}>
+        <label>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Produto</div>
+          <select value={sku} onChange={(e) => {
+            setSku(e.target.value);
+            const p = produtos.find((x) => x.sku === e.target.value);
+            if (p) { setCanalNome(p.canal); setPreco(p.precoPraticado || p.precoSaudavel || 0); }
+          }} style={estiloSel}>
+            <option value="">— Usar produto da calculadora —</option>
+            {produtos.map((p) => <option key={p.sku} value={p.sku}>{p.nome} ({p.sku})</option>)}
+          </select>
+        </label>
+        <label>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Canal de vendas</div>
+          <select value={canalNome} onChange={(e) => setCanalNome(e.target.value)} style={estiloSel}>
+            {CANAIS.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
+          </select>
+        </label>
+        <label>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Preço praticado (R$)</div>
+          <PrecoLivreInput value={preco} onChange={setPreco} fontSize={14} fontWeight={600} />
+        </label>
+      </div>
+      {prod && (
+        <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: C.sub }}>
+          <span>Custo: <b style={{ color: C.ink }}>{brl(prod.custo)}</b></span>
+          <span>Preço mín: <b style={{ color: C.ink }}>{brl(prod.precoMin)}</b></span>
+          <span>Preço saudável: <b style={{ color: C.accent }}>{brl(prod.precoSaudavel)}</b></span>
+          <span>Horas impressão: <b style={{ color: C.ink }}>{prod.horasImpressao}h</b></span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PainelLucro({ calc, horasImpressao, moHora }) {
+  const lh = calc.lucroHora != null ? calc.lucroHora : (horasImpressao > 0 ? calc.lucro / horasImpressao : null);
+  const corLucro = calc.lucro >= 0 ? C.good : C.bad;
+  const corLH = lh == null ? C.sub : lh <= 0 ? C.bad : lh < (moHora || 25) ? C.warn : C.good;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+      <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 16px" }}>
+        <div style={{ fontSize: 11, color: C.sub, textTransform: "uppercase", letterSpacing: 0.8 }}>Lucro líquido / peça</div>
+        <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 26, color: corLucro, margin: "4px 0" }}>{brl(calc.lucro)}</div>
+        <div style={{ fontSize: 12, color: C.sub }}>{pct(calc.margem)} de margem · <span style={{ color: calc.statusColor, fontWeight: 700 }}>{calc.status}</span></div>
+      </div>
+      <div style={{ background: C.panel, border: `1px solid ${lh != null ? corLH : C.line}44`, borderRadius: 12, padding: "14px 16px" }}>
+        <div style={{ fontSize: 11, color: C.sub, textTransform: "uppercase", letterSpacing: 0.8 }}>Lucro / hora de máquina</div>
+        <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 26, color: lh != null ? corLH : C.sub, margin: "4px 0" }}>
+          {lh != null ? <>{brl(lh)}<span style={{ fontSize: 13, fontWeight: 400 }}>/h</span></> : "—"}
+        </div>
+        <div style={{ fontSize: 12, color: C.sub }}>
+          {lh != null ? `${brl(calc.lucro)} ÷ ${(calc.produto || {}).horasImpressao || horasImpressao || "?"}h` : "Informe as horas de impressão"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Roas({ r, produtos }) {
+  const [sku, setSku] = React.useState("");
+  const [canalNome, setCanalNome] = React.useState(r.canalRef || "Mercado Livre");
+  const [preco, setPreco] = React.useState(r.precoPraticado || 0);
+
+  const prod = produtos.find((p) => p.sku === sku);
+  const calc = prod ? calcFromCatalogo(prod, canalNome, preco) : { ...r, lucro: r.lucroPraticado, margem: r.margemAtual, lucroHora: r.horasImpressao > 0 ? r.lucroPraticado / r.horasImpressao : null, status: r.status, statusColor: r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad, produto: null };
+
   return (
     <div>
-      <H title="ROAS & Anúncios" sub="Análise de apoio — quanto investir em mídia mantendo margem" />
-      <Card style={{ maxWidth: 620 }}>
-        <p style={{ color: C.sub, fontSize: 13, marginTop: 0 }}>Baseado no preço saudável de {brl(r.precoSaudavel)} (produto aberto na calculadora).</p>
-        <BigStat label="Margem antes de ads" value={pct(r.margemAntesAds)} />
-        <BigStat label="ACOS máximo" value={pct(r.acosMax)} hint="% da receita gastável em ads" />
-        <BigStat label="ROAS meta" value={r.roasMeta ? `${r.roasMeta.toFixed(1)}×` : "—"} accent hint="receita por R$ 1 investido" />
-        <BigStat label="Investimento máx. por venda" value={brl(r.investMaxVenda)} />
-        <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: C.panel2, fontSize: 13, color: C.sub }}>
-          {r.acosMax <= 0 ? "Sem margem para ads — suba o preço ou reduza custos." :
-           r.roasMeta <= 4 ? "Alta folga: comporta mídia agressiva com segurança." :
-           r.roasMeta <= 7 ? "Folga controlada: monitore o ACOS de perto." :
-           "Margem apertada para ads: priorize orgânico ou aumente o ticket."}
+      <H title="ROAS & Anúncios" sub="Quanto investir em mídia mantendo margem — por produto e canal" />
+      <SeletorProduto produtos={produtos} sku={sku} setSku={setSku} canalNome={canalNome} setCanalNome={setCanalNome} preco={preco} setPreco={setPreco} label="Produto para análise" />
+      <PainelLucro calc={calc} horasImpressao={prod ? prod.horasImpressao : 0} moHora={25} />
+      <Card style={{ maxWidth: 680 }}>
+        <Label>Análise de anúncios — {canalNome}</Label>
+        <BigStat label="Preço praticado" value={brl(calc.precoPraticado)} />
+        <BigStat label="Margem antes de ads" value={pct(calc.margemAntesAds)} hint="margem sem considerar verba de ads" />
+        <BigStat label="ACOS máximo" value={pct(calc.acosMax)} hint="% máxima da receita gastável em ads" />
+        <BigStat label="ROAS meta" value={calc.roasMeta ? `${calc.roasMeta.toFixed(1)}×` : "—"} accent hint="receita por R$ 1,00 investido em ads" />
+        <BigStat label="Investimento máx. por venda" value={brl(calc.investMaxVenda)} hint="teto de gasto para não corroer margem" />
+        <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: C.panel2, fontSize: 13, color: C.sub, lineHeight: 1.6 }}>
+          {calc.acosMax <= 0
+            ? "⚠️ Sem margem para ads — suba o preço ou reduza custos antes de anunciar."
+            : calc.roasMeta <= 3 ? "🟢 Alta folga: comporta mídia agressiva com segurança."
+            : calc.roasMeta <= 6 ? "🟡 Folga controlada: monitore o ACOS de perto."
+            : "🔴 Margem apertada para ads: priorize orgânico ou aumente o ticket."}
         </div>
       </Card>
     </div>
@@ -2312,25 +2415,63 @@ function Roas({ r }) {
 }
 
 // ---------- KITS ----------
-function Kits({ input, set, r, kit }) {
+function Kits({ input, set, r, kit, produtos }) {
+  const [sku, setSku] = React.useState("");
+  const [canalNome, setCanalNome] = React.useState(r.canalRef || "Mercado Livre");
+  const [preco, setPreco] = React.useState(r.precoPraticado || 0);
+  const [kitQtd, setKitQtd] = React.useState(input.kitQtd || 3);
+  const [kitDesconto, setKitDesconto] = React.useState(input.kitDesconto || 0.08);
+  const [kitEmbExtra, setKitEmbExtra] = React.useState(input.kitEmbExtra || 1.75);
+  const [kitBrindeExtra, setKitBrindeExtra] = React.useState(input.kitBrindeExtra || 1);
+
+  const prod = produtos.find((p) => p.sku === sku);
+  const calc = prod
+    ? calcFromCatalogo(prod, canalNome, preco)
+    : { precoPraticado: r.precoPraticado, lucro: r.lucroPraticado, margem: r.margemAtual, totalPct: r.totalPct, baseMaisTarifa: r.baseMaisTarifa, canal: r.canal, status: r.status, statusColor: r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad, produto: null, lucroHora: null };
+
+  const precoKit = calc.precoPraticado * kitQtd * (1 - kitDesconto);
+  const custoProdKit = calc.baseMaisTarifa * kitQtd;
+  const custoLogKit = kitEmbExtra + kitBrindeExtra;
+  const lucroUnit = calc.lucro;
+  const lucroKit = precoKit - custoProdKit - custoLogKit - ((calc.canal ? calc.canal.tarifa + calc.canal.frete : 0)) - precoKit * calc.totalPct;
+  const lucroKitUnit = lucroKit / kitQtd;
+  const margemUnit = calc.precoPraticado > 0 ? lucroUnit / calc.precoPraticado : 0;
+  const margemKit = precoKit > 0 ? lucroKit / precoKit : 0;
+  const horas = prod ? prod.horasImpressao : (input.horasImpressao || 0);
+  const lucroHoraUnit = horas > 0 ? lucroUnit / horas : null;
+  const lucroHoraKit = horas > 0 ? lucroKitUnit / horas : null;
+
   return (
     <div>
-      <H title="Kitficação" sub="Análise de apoio — unitário vs kit: ticket, lucro e margem" />
-      <Card style={{ marginBottom: 16, display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 120 }}><F label="Unidades no kit" value={input.kitQtd} onChange={(v) => set("kitQtd", v)} /></div>
-        <div style={{ flex: 1, minWidth: 120 }}><F label="Desconto (0–1)" value={input.kitDesconto} step={0.01} onChange={(v) => set("kitDesconto", v)} /></div>
-        <div style={{ flex: 1, minWidth: 120 }}><F label="Embalagem extra" value={input.kitEmbExtra} step={0.1} onChange={(v) => set("kitEmbExtra", v)} suffix="R$" /></div>
-        <div style={{ flex: 1, minWidth: 120 }}><F label="Brinde extra" value={input.kitBrindeExtra} step={0.1} onChange={(v) => set("kitBrindeExtra", v)} suffix="R$" /></div>
+      <H title="Kitficação" sub="Compare unitário vs kit — por produto, canal e preço" />
+      <SeletorProduto produtos={produtos} sku={sku} setSku={setSku} canalNome={canalNome} setCanalNome={setCanalNome} preco={preco} setPreco={setPreco} label="Produto base do kit" />
+      <PainelLucro calc={calc} horasImpressao={horas} moHora={25} />
+      <Card style={{ marginBottom: 16 }}>
+        <Label>Configuração do kit</Label>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          {[["Unidades no kit", kitQtd, setKitQtd], ["Desconto (ex: 0,08)", kitDesconto, setKitDesconto], ["Embalagem extra (R$)", kitEmbExtra, setKitEmbExtra], ["Brinde extra (R$)", kitBrindeExtra, setKitBrindeExtra]].map(([lbl, val, fn]) => (
+            <label key={lbl}>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>{lbl}</div>
+              <PrecoLivreInput value={val} onChange={fn} fontSize={14} fontWeight={600} />
+            </label>
+          ))}
+        </div>
       </Card>
       <Card>
+        <Label>Comparativo unitário vs kit ({kitQtd} unidades)</Label>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-          <thead><tr style={{ color: C.sub, fontSize: 12, textAlign: "left" }}>
-            <th style={{ padding: "6px 8px" }}>Indicador</th><th style={{ padding: "6px 8px" }}>Unitário</th><th style={{ padding: "6px 8px" }}>Kit</th><th style={{ padding: "6px 8px" }}>Análise</th></tr></thead>
+          <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
+            <th style={{ padding: "8px" }}>Indicador</th>
+            <th style={{ padding: "8px" }}>Unitário</th>
+            <th style={{ padding: "8px" }}>Kit</th>
+            <th style={{ padding: "8px" }}>Análise</th>
+          </tr></thead>
           <tbody>
-            <KR k="Preço de venda" u={brl(r.precoSaudavel)} kk={brl(kit.precoKit)} />
-            <KR k="Lucro por pedido" u={brl(kit.lucroUnit)} kk={brl(kit.lucroKit)} ok={kit.lucroKit > kit.lucroUnit} note={kit.lucroKit > kit.lucroUnit ? "Kit aumenta lucro" : "Kit não melhora"} />
-            <KR k="Lucro por unidade" u={brl(kit.lucroUnit)} kk={brl(kit.lucroKitUnit)} ok={kit.lucroKitUnit >= kit.lucroUnit} note={kit.lucroKitUnit >= kit.lucroUnit ? "Mantém/melhora" : "Reduz unitário"} />
-            <KR k="Margem líquida" u={pct(kit.margemUnit)} kk={pct(kit.margemKit)} ok={kit.margemKit >= kit.margemUnit} note={kit.margemKit >= kit.margemUnit ? "Margem preservada" : "Margem menor"} />
+            <KR k="Preço de venda" u={brl(calc.precoPraticado)} kk={brl(precoKit)} />
+            <KR k="Lucro por pedido" u={brl(lucroUnit)} kk={brl(lucroKit)} ok={lucroKit > lucroUnit} note={lucroKit > lucroUnit ? "Kit aumenta lucro total" : "Kit não melhora"} />
+            <KR k="Lucro por unidade" u={brl(lucroUnit)} kk={brl(lucroKitUnit)} ok={lucroKitUnit >= lucroUnit} note={lucroKitUnit >= lucroUnit ? "Mantém/melhora" : "Reduz unitário"} />
+            <KR k="Margem líquida" u={pct(margemUnit)} kk={pct(margemKit)} ok={margemKit >= margemUnit} note={margemKit >= margemUnit ? "Margem preservada" : "Margem menor"} />
+            <KR k={`Lucro/hora${horas > 0 ? ` (${horas}h)` : ""}`} u={lucroHoraUnit != null ? `${brl(lucroHoraUnit)}/h` : "—"} kk={lucroHoraKit != null ? `${brl(lucroHoraKit)}/h` : "—"} ok={lucroHoraKit != null && lucroHoraKit >= (lucroHoraUnit || 0)} note={lucroHoraKit != null ? (lucroHoraKit >= (lucroHoraUnit || 0) ? "Melhor retorno/hora" : "Menor retorno/hora") : ""} />
           </tbody>
         </table>
       </Card>
