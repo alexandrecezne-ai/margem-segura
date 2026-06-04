@@ -1937,27 +1937,19 @@ function ModalInsumo({ inicial, onSave, onClose, titulo }) {
           </>)}
           <label>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Custo / unidade (R$)</div>
-            <input type="text" inputMode="decimal" value={String(form.custoUn).replace(".",",")}
-              onChange={(e) => { const n = parseFloat(e.target.value.replace(",",".")); if (!isNaN(n)) set("custoUn", n); }}
-              placeholder="0,10" style={estiloInput} />
+            <PrecoLivreInput value={form.custoUn} onChange={(v) => set("custoUn", v)} placeholder="0,10" fontSize={14} fontWeight={400} />
           </label>
           <label>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Estoque atual</div>
-            <input type="text" inputMode="decimal" value={String(form.estoque).replace(".",",")}
-              onChange={(e) => { const n = parseFloat(e.target.value.replace(",",".")); if (!isNaN(n)) set("estoque", n); }}
-              placeholder="0" style={estiloInput} />
+            <PrecoLivreInput value={form.estoque} onChange={(v) => set("estoque", v)} placeholder="0" fontSize={14} fontWeight={400} />
           </label>
           <label>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Estoque mínimo</div>
-            <input type="text" inputMode="decimal" value={String(form.min).replace(".",",")}
-              onChange={(e) => { const n = parseFloat(e.target.value.replace(",",".")); if (!isNaN(n)) set("min", n); }}
-              placeholder="100" style={estiloInput} />
+            <PrecoLivreInput value={form.min} onChange={(v) => set("min", v)} placeholder="100" fontSize={14} fontWeight={400} />
           </label>
           <label>
             <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Consumo/dia (estimado)</div>
-            <input type="text" inputMode="decimal" value={String(form.consumoDia).replace(".",",")}
-              onChange={(e) => { const n = parseFloat(e.target.value.replace(",",".")); if (!isNaN(n)) set("consumoDia", n); }}
-              placeholder="0" style={estiloInput} />
+            <PrecoLivreInput value={form.consumoDia} onChange={(v) => set("consumoDia", v)} placeholder="0" fontSize={14} fontWeight={400} />
           </label>
         </div>
 
@@ -2571,8 +2563,8 @@ function Btn({ children, onClick, ghost, full, small, disabled }) {
 // Input de preço totalmente livre — só propaga no blur ou Enter
 function PrecoLivreInput({ value, onChange, placeholder, fontSize, fontWeight }) {
   const [local, setLocal] = React.useState("");
+  const [isFocused, setIsFocused] = React.useState(false);
   const focused = React.useRef(false);
-  // Sincroniza exibição só quando não está em foco
   React.useEffect(() => {
     if (!focused.current) setLocal(String(value || "").replace(".", ","));
   }, [value]);
@@ -2585,12 +2577,15 @@ function PrecoLivreInput({ value, onChange, placeholder, fontSize, fontWeight })
     <input type="text" inputMode="decimal" value={local}
       placeholder={placeholder || "0,00"}
       onChange={(e) => setLocal(e.target.value)}
-      onFocus={() => { focused.current = true; }}
-      onBlur={() => { focused.current = false; commit(); }}
+      onFocus={() => { focused.current = true; setIsFocused(true); }}
+      onBlur={() => { focused.current = false; setIsFocused(false); commit(); }}
       onKeyDown={(e) => e.key === "Enter" && commit()}
-      style={{ width: "100%", background: C.bg, border: `1px solid ${C.accent}`, color: C.ink,
+      style={{ width: "100%", background: C.bg,
+        border: `1px solid ${isFocused ? C.accent : C.line}`, color: C.ink,
         padding: "10px 14px", borderRadius: 9, fontSize: fontSize || 20,
-        fontWeight: fontWeight || 800, fontFamily: "Sora, inherit", boxSizing: "border-box", outline: "none" }} />
+        fontWeight: fontWeight || 800, fontFamily: isFocused || (fontSize || 20) >= 18 ? "Sora, inherit" : "inherit",
+        boxSizing: "border-box", outline: "none",
+        transition: "border-color 0.15s" }} />
   );
 }
 
