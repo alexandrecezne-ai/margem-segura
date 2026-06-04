@@ -1207,7 +1207,7 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
               <Label>Preço que será praticado — {r.canalRef}</Label>
               <div style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>Preço de venda (R$) — digite livremente e pressione Enter ou clique fora para aplicar</div>
               <PrecoLivreInput value={input.precoPraticado || round2(r.precoSaudavel)} onChange={(v) => set("precoPraticado", v)} />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4, flexWrap: "wrap", gap: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 8, flexWrap: "wrap", gap: 6 }}>
                 <span style={{ color: C.sub }}>Lucro líquido: <b style={{ color: r.lucroPraticado >= 0 ? C.good : C.bad }}>{brl(r.lucroPraticado)}</b>
                   {" · "}{pct(r.margemAtual)}
                   {input.lucroAlvoModo === "rs" && r.lucroPraticado < input.lucroAlvoValor &&
@@ -1217,6 +1217,25 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
                 </span>
                 <span style={{ fontWeight: 700, color: statusColor }}>{r.status}</span>
               </div>
+
+              {/* Lucro por hora de produção */}
+              {input.horasImpressao > 0 && (() => {
+                const lucroHora = r.lucroPraticado / input.horasImpressao;
+                const cor = lucroHora <= 0 ? C.bad : lucroHora < input.moHora ? C.warn : C.good;
+                const aviso = lucroHora <= 0 ? "Prejuízo por hora" : lucroHora < input.moHora ? "Abaixo da sua hora trabalhada" : "Acima da hora trabalhada ✓";
+                return (
+                  <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 10, background: C.bg, border: `1px solid ${cor}44`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 }}>Lucro líquido por hora de máquina</div>
+                      <div style={{ fontSize: 10, color: C.sub, marginTop: 2 }}>{brl(r.lucroPraticado)} ÷ {input.horasImpressao}h de impressão</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22, color: cor }}>{brl(lucroHora)}<span style={{ fontSize: 13, fontWeight: 400 }}>/h</span></div>
+                      <div style={{ fontSize: 11, color: cor }}>{aviso}</div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ marginTop: 18 }}><Label>Distribuição do preço praticado</Label></div>
@@ -1254,6 +1273,19 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
               <span style={{ fontSize: 12, color: C.sub }}>Praticado: {brl(r.precoPraticado)}</span>
               <span style={{ fontWeight: 700, color: statusColor, fontSize: 13 }}>{r.status} · {pct(r.margemAtual)}</span>
             </div>
+            {input.horasImpressao > 0 && (() => {
+              const lh = r.lucroPraticado / input.horasImpressao;
+              const cor = lh <= 0 ? C.bad : lh < (input.moHora || 25) ? C.warn : C.good;
+              return (
+                <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: C.bg, border: `1px solid ${cor}55` }}>
+                  <div style={{ fontSize: 11, color: C.sub }}>Lucro / hora de máquina</div>
+                  <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20, color: cor, marginTop: 2 }}>
+                    {brl(lh)}<span style={{ fontSize: 12, fontWeight: 400, color: C.sub }}>/h</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: C.sub, marginTop: 1 }}>{brl(r.lucroPraticado)} ÷ {input.horasImpressao}h</div>
+                </div>
+              );
+            })()}
             <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
               <Btn onClick={salvarNoCatalogo} full>＋ Salvar no catálogo</Btn>
               <Btn onClick={gerarOrcamento} ghost full>✎ Orçamento</Btn>
