@@ -251,7 +251,7 @@ function adminAlterarPlano(email, plano) {
 
 // ===================== ERP NO FIRESTORE =====================
 const erpDoc = (userKey) => db().collection("erp").doc(userKey);
-const ERP_KEYS = ["produtos","insumos","maquinas","orcamentos","pedidos","cond"];
+const ERP_KEYS = ["produtos","insumos","maquinas","orcamentos","pedidos","cond","pratos"];
 
 function loadErp(userKey) {
   return erpDoc(userKey).get().then((d) => {
@@ -554,6 +554,7 @@ function App({ userKey = "default", onLogout }) {
   const [orcamentos, setOrcamentos] = React.useState(() => LS("orcamentos", ORC_SEED));
   const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
   const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
+  const [pratos, setPratos] = React.useState(() => LS("pratos", []));
   const erpReady = React.useRef(false);
 
   // Carrega dados do Firestore ao logar
@@ -566,6 +567,7 @@ function App({ userKey = "default", onLogout }) {
       if (data.orcamentos !== undefined) setOrcamentos(data.orcamentos);
       if (data.pedidos !== undefined) setPedidos(data.pedidos);
       if (data.cond !== undefined) setCond(data.cond);
+      if (data.pratos !== undefined) setPratos(data.pratos);
     }).finally(() => { erpReady.current = true; });
   }, [userKey]);
 
@@ -579,6 +581,7 @@ function App({ userKey = "default", onLogout }) {
   React.useEffect(() => { save("orcamentos", orcamentos); if (erpReady.current) saveErpField(userKey, "orcamentos", orcamentos); }, [orcamentos]);
   React.useEffect(() => { save("cond", cond); if (erpReady.current) saveErpField(userKey, "cond", cond); }, [cond]);
   React.useEffect(() => { save("pedidos", pedidos); if (erpReady.current) saveErpField(userKey, "pedidos", pedidos); }, [pedidos]);
+  React.useEffect(() => { save("pratos", pratos); if (erpReady.current) saveErpField(userKey, "pratos", pratos); }, [pratos]);
 
   // ===================== CALCULADORA (estado de trabalho) =====================
   const [input, setInput] = React.useState({
@@ -812,7 +815,7 @@ function App({ userKey = "default", onLogout }) {
         {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} />}
-        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} />}
+        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} />}
         {tab === "roas" && <Roas r={r} produtos={produtos} />}
         {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} produtos={produtos} />}
         {tab === "academia" && <Academia go={setTab} plan={plan} />}
@@ -1490,63 +1493,347 @@ function Maquinas({ maquinas, setMaquinas }) {
 }
 
 // ---------- PRODUÇÃO (capacidade integrada às Máquinas) ----------
-function Producao({ maquinas, produtos, fila, go }) {
-  // carga: horas de impressão dos pedidos em Produção/Aguardando
-  const emProducao = [...(fila.aguardando || []), ...(fila.produzir || [])];
-  const horasPedido = (p) => (p.itens || []).reduce((a, it) => {
-    const prod = produtos.find((x) => x.sku === it.sku);
-    return a + (prod ? (prod.horasImpressao || 0) * it.qtd : 0);
-  }, 0);
-  const horasCarga = emProducao.reduce((a, p) => a + horasPedido(p), 0);
+const STATUS_PRATO = { planejado: { label: "Planejado", cor: C.blue }, imprimindo: { label: "Imprimindo", cor: C.warn }, concluido: { label: "Concluído", cor: C.good } };
+
+function novoPratoId(pratos) { return `PR-${String((pratos || []).length + 1).padStart(3, "0")}-${Date.now().toString(36).slice(-3).toUpperCase()}`; }
+
+function ModalNovoPrato({ itensDisp, maquinas, onSave, onClose }) {
+  const [maqId, setMaqId] = React.useState(maquinas[0] ? maquinas[0].id : "");
+  const [qtds, setQtds] = React.useState(() => {
+    const m = {};
+    itensDisp.forEach((it) => { m[`${it.pedidoId}_${it.sku}_${it.cor}`] = it.qtdSel || it.qtd; });
+    return m;
+  });
+  const chave = (it) => `${it.pedidoId}_${it.sku}_${it.cor}`;
+  const horasTotal = itensDisp.reduce((a, it) => a + (it.horasImpressao || 0) * (Number(qtds[chave(it)]) || 0), 0);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, padding: 28, maxWidth: 580, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 17, marginBottom: 4 }}>🖨 Novo prato de impressão</div>
+        <div style={{ fontSize: 12, color: C.sub, marginBottom: 20 }}>Defina a quantidade de cada peça neste prato e selecione a máquina.</div>
+
+        <label style={{ display: "block", marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Máquina</div>
+          <select value={maqId} onChange={(e) => setMaqId(e.target.value)}
+            style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "9px 10px", borderRadius: 8, fontSize: 14, fontFamily: "inherit" }}>
+            <option value="">— Sem máquina definida —</option>
+            {maquinas.map((m) => <option key={m.id} value={m.id}>{m.nome} ({m.tipo})</option>)}
+          </select>
+        </label>
+
+        <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Peças neste prato</div>
+        {itensDisp.map((it) => {
+          const k = chave(it);
+          const q = Number(qtds[k]) || 0;
+          return (
+            <div key={k} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${C.line}` }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{it.produto}</div>
+                <div style={{ fontSize: 11, color: C.sub }}>{it.pedidoId} · {it.cliente} · {it.cor || "—"} · {it.horasImpressao}h/un</div>
+                <div style={{ fontSize: 11, color: C.sub }}>Disponível na fila: <b style={{ color: C.ink }}>{it.qtd} un</b></div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <MiniBtn onClick={() => setQtds((s) => ({ ...s, [k]: Math.max(0, (Number(s[k]) || 0) - 1) }))}>−</MiniBtn>
+                <span style={{ minWidth: 32, textAlign: "center", fontWeight: 700 }}>{q}</span>
+                <MiniBtn onClick={() => setQtds((s) => ({ ...s, [k]: Math.min(it.qtd, (Number(s[k]) || 0) + 1) }))}>＋</MiniBtn>
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={{ marginTop: 16, padding: "12px 14px", background: C.panel2, borderRadius: 10, display: "flex", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 13, color: C.sub }}>Estimativa de impressão</span>
+          <span style={{ fontFamily: "Sora", fontWeight: 800, color: C.accent }}>{horasTotal.toFixed(1)} h</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+          <button onClick={onClose} style={{ flex: 1, background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "10px", borderRadius: 9, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancelar</button>
+          <button onClick={() => {
+            const itens = itensDisp.map((it) => ({ ...it, qtd: Number(qtds[chave(it)]) || 0 })).filter((it) => it.qtd > 0);
+            if (!itens.length) { alert("Adicione ao menos uma peça ao prato."); return; }
+            onSave({ maqId, itens, horasTotal });
+          }} style={{ flex: 2, background: C.accent, border: "none", color: "#1a1207", padding: "10px", borderRadius: 9, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+            🖨 Criar prato
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos }) {
+  const [aba, setAba] = React.useState("fila"); // "fila" | "pratos" | "maquinas"
+  const [selecionados, setSelecionados] = React.useState([]);
+  const [modalPrato, setModalPrato] = React.useState(false);
+  const [filtroPrato, setFiltroPrato] = React.useState("todos"); // "todos" | maqId | "sem-maquina"
+
+  // Derivar todos os itens individuais da fila de produção
+  const emProducao = [...(fila.produzir || []), ...(fila.aguardando || [])];
+
+  const itensQueue = React.useMemo(() => {
+    const queue = [];
+    emProducao.forEach((pedido) => {
+      (pedido.itens || []).forEach((item) => {
+        const prod = produtos.find((x) => x.sku === item.sku);
+        const horasImpressao = prod ? (prod.horasImpressao || 0) : 0;
+        // Quantidade já alocada em pratos não concluídos
+        const emPratos = pratos.filter((p) => p.status !== "concluido").reduce((acc, p) => {
+          const found = (p.itens || []).find((i) => i.pedidoId === pedido.id && i.sku === item.sku && i.cor === item.cor);
+          return acc + (found ? found.qtd : 0);
+        }, 0);
+        const qtdPendente = (item.qtd || 1) - emPratos;
+        if (qtdPendente > 0) {
+          queue.push({ pedidoId: pedido.id, cliente: pedido.cliente, prioridade: pedido.prioridade, etapa: pedido.etapa, sku: item.sku, produto: item.produto || (prod ? prod.nome : item.sku), qtd: qtdPendente, qtdTotal: item.qtd || 1, cor: item.cor || "", horasImpressao, horasTotais: horasImpressao * qtdPendente });
+        }
+      });
+    });
+    return queue;
+  }, [emProducao, pratos, produtos]);
+
+  const toggleSel = (key) => setSelecionados((s) => s.includes(key) ? s.filter((x) => x !== key) : [...s, key]);
+  const itensSelDisp = itensQueue.filter((it) => selecionados.includes(`${it.pedidoId}_${it.sku}_${it.cor}`));
+
+  const criarPrato = ({ maqId, itens, horasTotal }) => {
+    const novo = { id: novoPratoId(pratos), maquinaId: maqId, status: "planejado", criadoEm: hoje(), horasTotal, itens };
+    setPratos((p) => [...p, novo]);
+    setSelecionados([]);
+    setModalPrato(false);
+    setAba("pratos");
+  };
+
+  const avancarPrato = (id) => setPratos((arr) => arr.map((p) => {
+    if (p.id !== id) return p;
+    const next = { planejado: "imprimindo", imprimindo: "concluido" };
+    return next[p.status] ? { ...p, status: next[p.status] } : p;
+  }));
+
+  const deletarPrato = (id) => { if (confirm("Remover este prato?")) setPratos((arr) => arr.filter((p) => p.id !== id)); };
+
+  const mudarMaquina = (id, maqId) => setPratos((arr) => arr.map((p) => p.id === id ? { ...p, maquinaId: maqId } : p));
+
+  // Métricas
   const capTotal = maquinas.reduce((a, m) => a + (m.horasDia || 0) * (m.diasMes || 0) * (m.eficiencia || 0), 0);
-  const ocup = capTotal ? horasCarga / capTotal : 0;
-  const ocupCor = ocup > 1 ? C.bad : ocup > 0.85 ? C.warn : C.good;
+  const horasFila = itensQueue.reduce((a, i) => a + i.horasTotais, 0);
+  const horasEmPratos = pratos.filter((p) => p.status !== "concluido").reduce((a, p) => a + (p.horasTotal || 0), 0);
+  const pratosAtivos = pratos.filter((p) => p.status === "imprimindo").length;
+
+  const pratosFiltrados = filtroPrato === "todos" ? pratos : filtroPrato === "sem-maquina" ? pratos.filter((p) => !p.maquinaId) : pratos.filter((p) => p.maquinaId === filtroPrato);
+
+  const corPrior = { Urgente: C.bad, Alta: C.warn, Normal: C.blue, Baixa: C.sub };
+
   return (
     <div>
-      <H title="Produção" sub="Capacidade das máquinas cadastradas vs. carga dos pedidos na fila" />
+      <H title="Produção" sub="Fila de peças, pratos de impressão e alocação por máquina" />
+
+      {/* KPIs */}
       <div className="grid-kpi" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 18 }}>
-        <KPI label="Capacidade útil/mês" value={`${Math.round(capTotal)} h`} c={C.ink} />
-        <KPI label="Carga na fila" value={`${Math.round(horasCarga)} h`} c={C.blue} onClick={() => go("pedidos")} />
-        <KPI label="Ocupação" value={pct(ocup)} c={ocupCor} />
-        <KPI label="Máquinas ativas" value={`${maquinas.length}`} c={C.ink} onClick={() => go("maquinas")} />
+        <KPI label="Peças na fila" value={`${itensQueue.reduce((a,i)=>a+i.qtd,0)}`} c={C.warn} />
+        <KPI label="Horas pendentes" value={`${horasFila.toFixed(1)}h`} c={C.blue} />
+        <KPI label="Imprimindo agora" value={`${pratosAtivos} prato(s)`} c={C.accent} />
+        <KPI label="Cap. útil/mês" value={`${Math.round(capTotal)}h`} c={C.ink} onClick={() => go("maquinas")} />
       </div>
-      <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Card title="Máquinas e capacidade">
-          {!maquinas.length && <Hint>Nenhuma máquina. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar →</a></Hint>}
-          {maquinas.map((m) => {
-            const cap = (m.horasDia || 0) * (m.diasMes || 0) * (m.eficiencia || 0);
-            const share = capTotal ? cap / capTotal : 0;
-            return (
-              <div key={m.id} style={{ padding: "9px 0", borderBottom: `1px solid ${C.line}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{m.nome} <span style={{ color: C.sub, fontWeight: 400, fontSize: 12 }}>{m.tipo}</span></span>
-                  <span style={{ fontSize: 13, color: C.sub }}>{Math.round(cap)} h/mês</span>
-                </div>
-                <div style={{ height: 6, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ width: `${Math.min(100, share * 100)}%`, height: "100%", background: C.accent2 }} /></div>
-              </div>
-            );
-          })}
-        </Card>
-        <Card title="Carga atual (pedidos a produzir)">
-          {!emProducao.length && <Hint>Nenhum pedido em produção no momento.</Hint>}
-          {emProducao.map((p) => {
-            const h = horasPedido(p);
-            return (
-              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${C.line}` }}>
-                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{p.id} · {(p.itens || []).length} item(ns)</div>
-                  <div style={{ fontSize: 11, color: C.sub }}>{p.cliente} · {p.etapa}</div></div>
-                <span style={{ fontSize: 13, color: C.sub }}>{h.toFixed(1)} h</span>
-              </div>
-            );
-          })}
-          <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: C.panel2, fontSize: 13 }}>
-            {ocup > 1 ? <span style={{ color: C.bad }}>Capacidade estourada: priorize urgentes ou amplie horas/máquinas.</span>
-              : ocup > 0.85 ? <span style={{ color: C.warn }}>Perto do limite — atenção a novos pedidos.</span>
-              : <span style={{ color: C.good }}>Há folga de capacidade para novos pedidos.</span>}
+
+      {/* Abas */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {[["fila","📋 Fila de peças"],["pratos","🖨 Pratos"],["maquinas","⚙ Por máquina"]].map(([id,label]) => (
+          <button key={id} onClick={() => setAba(id)}
+            style={{ background: aba === id ? C.accent : C.panel2, color: aba === id ? "#1a1207" : C.sub, border: `1px solid ${aba === id ? C.accent : C.line}`, padding: "7px 16px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── ABA: FILA DE PEÇAS ── */}
+      {aba === "fila" && (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+            {selecionados.length > 0 && (
+              <Btn onClick={() => setModalPrato(true)}>🖨 Criar prato ({selecionados.length} item{selecionados.length > 1 ? "s" : ""})</Btn>
+            )}
+            {selecionados.length > 0 && (
+              <button onClick={() => setSelecionados([])} style={{ background: "transparent", border: "none", color: C.sub, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✕ Limpar seleção</button>
+            )}
+            <span style={{ marginLeft: "auto", fontSize: 12, color: C.sub }}>{itensQueue.length === 0 ? "Nenhuma peça pendente" : `${itensQueue.length} item(s) aguardando alocação`}</span>
           </div>
-        </Card>
-      </div>
+
+          <Card>
+            {itensQueue.length === 0 && (
+              <div style={{ textAlign: "center", padding: 32, color: C.sub }}>
+                <div style={{ fontSize: 14, marginBottom: 8 }}>✅ Todas as peças estão alocadas em pratos!</div>
+                <button onClick={() => go("pedidos")} style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "7px 14px", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Ver pedidos →</button>
+              </div>
+            )}
+            {itensQueue.length > 0 && (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
+                  <th style={{ padding: "8px 6px", width: 28 }}></th>
+                  <th style={{ padding: "8px" }}>Produto</th>
+                  <th style={{ padding: "8px" }}>Pedido</th>
+                  <th style={{ padding: "8px" }}>Qtd pendente</th>
+                  <th style={{ padding: "8px" }}>Cor</th>
+                  <th style={{ padding: "8px" }}>Horas</th>
+                  <th style={{ padding: "8px" }}>Prioridade</th>
+                </tr></thead>
+                <tbody>
+                  {itensQueue.map((it) => {
+                    const key = `${it.pedidoId}_${it.sku}_${it.cor}`;
+                    const sel = selecionados.includes(key);
+                    return (
+                      <tr key={key} style={{ borderTop: `1px solid ${C.line}`, background: sel ? `${C.accent}18` : "transparent" }}>
+                        <td style={{ padding: "8px 6px" }}>
+                          <input type="checkbox" checked={sel} onChange={() => toggleSel(key)} style={{ cursor: "pointer", accentColor: C.accent }} />
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <div style={{ fontWeight: 600 }}>{it.produto}</div>
+                          <div style={{ fontSize: 11, color: C.sub }}>{it.sku}</div>
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <div style={{ fontWeight: 600 }}>{it.pedidoId}</div>
+                          <div style={{ fontSize: 11, color: C.sub }}>{it.cliente}</div>
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <span style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 16, color: C.accent }}>{it.qtd}</span>
+                          <span style={{ fontSize: 11, color: C.sub }}> / {it.qtdTotal} un</span>
+                        </td>
+                        <td style={{ padding: "10px 8px", color: C.sub }}>{it.cor || "—"}</td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <div style={{ fontWeight: 600 }}>{it.horasTotais.toFixed(1)}h</div>
+                          <div style={{ fontSize: 11, color: C.sub }}>{it.horasImpressao}h/un</div>
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: corPrior[it.prioridade] || C.sub }}>{it.prioridade || "—"}</span>
+                          <div style={{ fontSize: 10, color: C.sub }}>{it.etapa}</div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </Card>
+          {itensQueue.length > 0 && <div style={{ marginTop: 10, fontSize: 12, color: C.sub }}>💡 Selecione peças com ✓ e clique <b>"Criar prato"</b> para agrupar em um prato de impressão e alocar uma máquina.</div>}
+        </div>
+      )}
+
+      {/* ── ABA: PRATOS ── */}
+      {aba === "pratos" && (
+        <div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <Btn onClick={() => { setSelecionados([]); setAba("fila"); }}>＋ Novo prato</Btn>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[["todos","Todos"],["sem-maquina","Sem máquina"],...maquinas.map((m)=>[m.id,m.nome])].map(([id,label])=>(
+                <button key={id} onClick={() => setFiltroPrato(id)}
+                  style={{ background: filtroPrato === id ? C.accent : C.panel2, color: filtroPrato === id ? "#1a1207" : C.sub, border: `1px solid ${filtroPrato === id ? C.accent : C.line}`, padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {pratosFiltrados.length === 0 && (
+            <Card><div style={{ textAlign: "center", padding: 24, color: C.sub }}>Nenhum prato criado. Vá para "Fila de peças", selecione itens e crie um prato.</div></Card>
+          )}
+          <div style={{ display: "grid", gap: 12 }}>
+            {pratosFiltrados.map((prato) => {
+              const maq = maquinas.find((m) => m.id === prato.maquinaId);
+              const st = STATUS_PRATO[prato.status] || STATUS_PRATO.planejado;
+              return (
+                <Card key={prato.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 15 }}>{prato.id}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: st.cor, background: `${st.cor}22`, padding: "2px 8px", borderRadius: 6 }}>{st.label}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: C.sub, marginTop: 3 }}>
+                        Criado: {prato.criadoEm} · {(prato.horasTotal || 0).toFixed(1)}h estimadas
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <select value={prato.maquinaId || ""} onChange={(e) => mudarMaquina(prato.id, e.target.value)}
+                        style={{ background: C.panel2, border: `1px solid ${C.line}`, color: C.ink, padding: "5px 8px", borderRadius: 7, fontSize: 12, fontFamily: "inherit" }}>
+                        <option value="">— Máquina —</option>
+                        {maquinas.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                      </select>
+                      {prato.status !== "concluido" && (
+                        <button onClick={() => avancarPrato(prato.id)}
+                          style={{ background: prato.status === "planejado" ? C.warn : C.good, border: "none", color: "#0a1a0a", padding: "6px 14px", borderRadius: 7, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                          {prato.status === "planejado" ? "▶ Iniciar" : "✓ Concluir"}
+                        </button>
+                      )}
+                      <button onClick={() => deletarPrato(prato.id)} style={{ background: "transparent", border: `1px solid ${C.bad}`, color: C.bad, padding: "5px 10px", borderRadius: 7, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
+                    </div>
+                  </div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ color: C.sub, fontSize: 10, textTransform: "uppercase" }}>
+                      <th style={{ padding: "4px 8px", textAlign: "left" }}>Produto</th>
+                      <th style={{ padding: "4px 8px", textAlign: "left" }}>Pedido</th>
+                      <th style={{ padding: "4px 8px", textAlign: "left" }}>Cor</th>
+                      <th style={{ padding: "4px 8px", textAlign: "right" }}>Qtd</th>
+                      <th style={{ padding: "4px 8px", textAlign: "right" }}>Horas</th>
+                    </tr></thead>
+                    <tbody>
+                      {(prato.itens || []).map((it, idx) => (
+                        <tr key={idx} style={{ borderTop: `1px solid ${C.line}` }}>
+                          <td style={{ padding: "6px 8px", fontWeight: 600 }}>{it.produto}</td>
+                          <td style={{ padding: "6px 8px", color: C.sub }}>{it.pedidoId} · {it.cliente}</td>
+                          <td style={{ padding: "6px 8px", color: C.sub }}>{it.cor || "—"}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700 }}>{it.qtd}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right", color: C.sub }}>{((it.horasImpressao || 0) * it.qtd).toFixed(1)}h</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── ABA: POR MÁQUINA ── */}
+      {aba === "maquinas" && (
+        <div style={{ display: "grid", gap: 16 }}>
+          {!maquinas.length && <Card><Hint>Nenhuma máquina cadastrada. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar →</a></Hint></Card>}
+          {maquinas.map((maq) => {
+            const pratosM = pratos.filter((p) => p.maquinaId === maq.id);
+            const horasM = pratosM.filter((p) => p.status !== "concluido").reduce((a, p) => a + (p.horasTotal || 0), 0);
+            const imprimindo = pratosM.find((p) => p.status === "imprimindo");
+            return (
+              <Card key={maq.id}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 15 }}>🖨 {maq.nome}</div>
+                    <div style={{ fontSize: 12, color: C.sub }}>{maq.tipo} · {horasM.toFixed(1)}h na fila</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    {imprimindo ? <span style={{ fontSize: 12, fontWeight: 700, color: C.warn }}>▶ Imprimindo: {imprimindo.id}</span>
+                      : <span style={{ fontSize: 12, color: C.sub }}>Disponível</span>}
+                  </div>
+                </div>
+                {pratosM.length === 0 && <div style={{ color: C.sub, fontSize: 13 }}>Nenhum prato alocado.</div>}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {pratosM.map((p) => {
+                    const st = STATUS_PRATO[p.status] || STATUS_PRATO.planejado;
+                    return (
+                      <div key={p.id} style={{ background: C.panel2, border: `1px solid ${st.cor}66`, borderRadius: 10, padding: "10px 14px", minWidth: 140 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{p.id}</div>
+                        <div style={{ fontSize: 11, color: st.cor, fontWeight: 700 }}>{st.label}</div>
+                        <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>{(p.itens || []).reduce((a, i) => a + i.qtd, 0)} peças · {(p.horasTotal || 0).toFixed(1)}h</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {modalPrato && (
+        <ModalNovoPrato itensDisp={itensSelDisp} maquinas={maquinas} onSave={criarPrato} onClose={() => setModalPrato(false)} />
+      )}
     </div>
   );
 }
