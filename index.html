@@ -251,7 +251,7 @@ function adminAlterarPlano(email, plano) {
 
 // ===================== ERP NO FIRESTORE =====================
 const erpDoc = (userKey) => db().collection("erp").doc(userKey);
-const ERP_KEYS = ["produtos","insumos","maquinas","orcamentos","pedidos","cond","pratos"];
+const ERP_KEYS = ["produtos","insumos","maquinas","orcamentos","pedidos","cond","pratos","prodAvulsa"];
 
 function loadErp(userKey) {
   return erpDoc(userKey).get().then((d) => {
@@ -555,6 +555,7 @@ function App({ userKey = "default", onLogout }) {
   const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
   const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
   const [pratos, setPratos] = React.useState(() => LS("pratos", []));
+  const [prodAvulsa, setProdAvulsa] = React.useState(() => LS("prodAvulsa", []));
   const erpReady = React.useRef(false);
 
   // Carrega dados do Firestore ao logar
@@ -568,6 +569,7 @@ function App({ userKey = "default", onLogout }) {
       if (data.pedidos !== undefined) setPedidos(data.pedidos);
       if (data.cond !== undefined) setCond(data.cond);
       if (data.pratos !== undefined) setPratos(data.pratos);
+      if (data.prodAvulsa !== undefined) setProdAvulsa(data.prodAvulsa);
     }).finally(() => { erpReady.current = true; });
   }, [userKey]);
 
@@ -582,6 +584,7 @@ function App({ userKey = "default", onLogout }) {
   React.useEffect(() => { save("cond", cond); if (erpReady.current) saveErpField(userKey, "cond", cond); }, [cond]);
   React.useEffect(() => { save("pedidos", pedidos); if (erpReady.current) saveErpField(userKey, "pedidos", pedidos); }, [pedidos]);
   React.useEffect(() => { save("pratos", pratos); if (erpReady.current) saveErpField(userKey, "pratos", pratos); }, [pratos]);
+  React.useEffect(() => { save("prodAvulsa", prodAvulsa); if (erpReady.current) saveErpField(userKey, "prodAvulsa", prodAvulsa); }, [prodAvulsa]);
 
   // ===================== CALCULADORA (estado de trabalho) =====================
   const [input, setInput] = React.useState({
@@ -815,7 +818,7 @@ function App({ userKey = "default", onLogout }) {
         {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} />}
-        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} />}
+        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} setPedidos={setPedidos} setInsumos={setInsumos} insumos={insumos} prodAvulsa={prodAvulsa} setProdAvulsa={setProdAvulsa} />}
         {tab === "roas" && <Roas r={r} produtos={produtos} />}
         {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} produtos={produtos} />}
         {tab === "academia" && <Academia go={setTab} plan={plan} />}
@@ -1495,6 +1498,96 @@ function Maquinas({ maquinas, setMaquinas }) {
 // ---------- PRODUÇÃO (capacidade integrada às Máquinas) ----------
 const STATUS_PRATO = { planejado: { label: "Planejado", cor: C.blue }, imprimindo: { label: "Imprimindo", cor: C.warn }, concluido: { label: "Concluído", cor: C.good } };
 
+function ProducaoAvulsa({ prodAvulsa, setProdAvulsa, maquinas }) {
+  const VAZIO = { produto: "", sku: "", maquinaId: "", qtd: 1, horasEst: 0, obs: "", status: "planejado" };
+  const [form, setForm] = React.useState(VAZIO);
+  const estiloInput = { width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" };
+  const set = (k, v) => setForm((s) => ({ ...s, [k]: v }));
+
+  const criar = () => {
+    if (!form.produto.trim()) { alert("Informe o produto/descrição."); return; }
+    setProdAvulsa((arr) => [{ ...form, id: `AV-${Date.now().toString(36).toUpperCase().slice(-5)}`, criadoEm: hoje() }, ...arr]);
+    setForm(VAZIO);
+  };
+  const avancar = (id) => setProdAvulsa((arr) => arr.map((p) => {
+    if (p.id !== id) return p;
+    const next = { planejado: "imprimindo", imprimindo: "concluido" };
+    return next[p.status] ? { ...p, status: next[p.status] } : p;
+  }));
+  const deletar = (id) => { if (confirm("Remover?")) setProdAvulsa((arr) => arr.filter((p) => p.id !== id)); };
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 16 }}>
+        <Label>Nova produção avulsa</Label>
+        <div style={{ fontSize: 12, color: C.sub, marginBottom: 14 }}>Testes, protótipos, reposição de estoque ou qualquer impressão fora de pedido.</div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <label>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Produto / Descrição *</div>
+            <input value={form.produto} onChange={(e) => set("produto", e.target.value)} placeholder="Ex: Teste filamento PETG, Reposição suporte..." style={estiloInput} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>SKU (opcional)</div>
+            <input value={form.sku} onChange={(e) => set("sku", e.target.value)} placeholder="Ex: SUP-HEAD-001" style={estiloInput} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Quantidade</div>
+            <PrecoLivreInput value={form.qtd} onChange={(v) => set("qtd", v)} fontSize={13} fontWeight={600} />
+          </label>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 10, marginBottom: 14 }}>
+          <label>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Máquina</div>
+            <select value={form.maquinaId} onChange={(e) => set("maquinaId", e.target.value)} style={estiloInput}>
+              <option value="">— Sem máquina —</option>
+              {maquinas.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+            </select>
+          </label>
+          <label>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Horas estimadas</div>
+            <PrecoLivreInput value={form.horasEst} onChange={(v) => set("horasEst", v)} fontSize={13} fontWeight={600} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Observações</div>
+            <input value={form.obs} onChange={(e) => set("obs", e.target.value)} placeholder="Motivo, material, notas..." style={estiloInput} />
+          </label>
+        </div>
+        <Btn onClick={criar}>➕ Adicionar à produção</Btn>
+      </Card>
+
+      <Card>
+        <Label>Produções avulsas ({prodAvulsa.length})</Label>
+        {prodAvulsa.length === 0 && <div style={{ color: C.sub, fontSize: 13, padding: "12px 0" }}>Nenhuma produção avulsa registrada.</div>}
+        <div style={{ display: "grid", gap: 10 }}>
+          {prodAvulsa.map((p) => {
+            const maq = maquinas.find((m) => m.id === p.maquinaId);
+            const st = STATUS_PRATO[p.status] || STATUS_PRATO.planejado;
+            return (
+              <div key={p.id} style={{ background: C.panel2, borderRadius: 12, padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, borderLeft: `3px solid ${st.cor}` }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{p.produto} {p.sku ? <span style={{ fontSize: 11, color: C.sub }}>({p.sku})</span> : ""}</div>
+                  <div style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+                    {p.id} · {p.criadoEm} · {p.qtd} un · {p.horasEst}h{maq ? ` · ${maq.nome}` : ""}{p.obs ? ` · ${p.obs}` : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: st.cor, background: `${st.cor}22`, padding: "3px 10px", borderRadius: 6 }}>{st.label}</span>
+                  {p.status !== "concluido" && (
+                    <button onClick={() => avancar(p.id)} style={{ background: p.status === "planejado" ? C.warn : C.good, border: "none", color: "#0a1a0a", padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                      {p.status === "planejado" ? "▶ Iniciar" : "✓ Concluir"}
+                    </button>
+                  )}
+                  <button onClick={() => deletar(p.id)} style={{ background: "transparent", border: `1px solid ${C.bad}`, color: C.bad, padding: "4px 9px", borderRadius: 7, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🗑</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function novoPratoId(pratos) { return `PR-${String((pratos || []).length + 1).padStart(3, "0")}-${Date.now().toString(36).slice(-3).toUpperCase()}`; }
 
 function ModalNovoPrato({ itensDisp, maquinas, onSave, onClose }) {
@@ -1562,11 +1655,11 @@ function ModalNovoPrato({ itensDisp, maquinas, onSave, onClose }) {
   );
 }
 
-function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos }) {
-  const [aba, setAba] = React.useState("fila"); // "fila" | "pratos" | "maquinas"
+function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos, setPedidos, setInsumos, insumos, prodAvulsa, setProdAvulsa }) {
+  const [aba, setAba] = React.useState("fila"); // "fila" | "pratos" | "maquinas" | "avulsa"
   const [selecionados, setSelecionados] = React.useState([]);
   const [modalPrato, setModalPrato] = React.useState(false);
-  const [filtroPrato, setFiltroPrato] = React.useState("todos"); // "todos" | maqId | "sem-maquina"
+  const [filtroPrato, setFiltroPrato] = React.useState("todos");
 
   // Derivar todos os itens individuais da fila de produção
   const emProducao = [...(fila.produzir || []), ...(fila.aguardando || [])];
@@ -1602,11 +1695,49 @@ function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos }) 
     setAba("pratos");
   };
 
-  const avancarPrato = (id) => setPratos((arr) => arr.map((p) => {
-    if (p.id !== id) return p;
+  const avancarPrato = (id) => {
+    const prato = pratos.find((p) => p.id === id);
+    if (!prato) return;
     const next = { planejado: "imprimindo", imprimindo: "concluido" };
-    return next[p.status] ? { ...p, status: next[p.status] } : p;
-  }));
+    const novoStatus = next[prato.status];
+    if (!novoStatus) return;
+    const novosPratos = pratos.map((p) => p.id === id ? { ...p, status: novoStatus } : p);
+    setPratos(novosPratos);
+
+    // Se concluiu → verificar se pedidos atingiram produção completa
+    if (novoStatus === "concluido") {
+      const pratosConcluidos = novosPratos.filter((p) => p.status === "concluido");
+      // Para cada pedido afetado pelo prato concluído, calcular total produzido
+      const pedidosAfetados = new Set((prato.itens || []).map((i) => i.pedidoId));
+      setPedidos((ped) => ped.map((pedido) => {
+        if (!pedidosAfetados.has(pedido.id)) return pedido;
+        if (pedido.etapa !== "Produzir" && pedido.etapa !== "Aguardando insumo") return pedido;
+        // Somar quantidade produzida (pratos concluídos) para cada item do pedido
+        const produzidoPorSku = {};
+        pratosConcluidos.forEach((p) => {
+          (p.itens || []).filter((i) => i.pedidoId === pedido.id).forEach((i) => {
+            const k = `${i.sku}_${i.cor}`;
+            produzidoPorSku[k] = (produzidoPorSku[k] || 0) + i.qtd;
+          });
+        });
+        // Verificar se todas as quantidades estão cobertas
+        const tudo = (pedido.itens || []).every((it) => {
+          const k = `${it.sku}_${it.cor || ""}`;
+          return (produzidoPorSku[k] || 0) >= (it.qtd || 1);
+        });
+        if (tudo) {
+          // Baixar insumos e avançar para Embalar
+          (pedido.itens || []).forEach((it) => {
+            if (it.insumoId && it.necessario) {
+              setInsumos((arr) => arr.map((i) => i.id === it.insumoId ? { ...i, estoque: Math.max(0, i.estoque - it.necessario) } : i));
+            }
+          });
+          return { ...pedido, etapa: "Embalar" };
+        }
+        return pedido;
+      }));
+    }
+  };
 
   const deletarPrato = (id) => { if (confirm("Remover este prato?")) setPratos((arr) => arr.filter((p) => p.id !== id)); };
 
@@ -1636,7 +1767,7 @@ function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos }) 
 
       {/* Abas */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {[["fila","📋 Fila de peças"],["pratos","🖨 Pratos"],["maquinas","⚙ Por máquina"]].map(([id,label]) => (
+        {[["fila","📋 Fila de peças"],["pratos","🖨 Pratos"],["maquinas","⚙ Por máquina"],["avulsa","➕ Avulsa"]].map(([id,label]) => (
           <button key={id} onClick={() => setAba(id)}
             style={{ background: aba === id ? C.accent : C.panel2, color: aba === id ? "#1a1207" : C.sub, border: `1px solid ${aba === id ? C.accent : C.line}`, padding: "7px 16px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             {label}
@@ -1796,23 +1927,70 @@ function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos }) 
       {aba === "maquinas" && (
         <div style={{ display: "grid", gap: 16 }}>
           {!maquinas.length && <Card><Hint>Nenhuma máquina cadastrada. <a onClick={() => go("maquinas")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar →</a></Hint></Card>}
-          {maquinas.map((maq) => {
-            const pratosM = pratos.filter((p) => p.maquinaId === maq.id);
-            const horasM = pratosM.filter((p) => p.status !== "concluido").reduce((a, p) => a + (p.horasTotal || 0), 0);
-            const imprimindo = pratosM.find((p) => p.status === "imprimindo");
+
+          {/* Comparativo geral */}
+          {maquinas.length > 0 && (() => {
+            const horasFilaTotal = itensQueue.reduce((a, i) => a + i.horasTotais, 0);
+            const horasPratosTotal = pratos.filter((p) => p.status !== "concluido").reduce((a, p) => a + (p.horasTotal || 0), 0);
+            const capDiaTotal = maquinas.reduce((a, m) => a + (m.horasDia || 0) * (m.eficiencia || 1), 0);
+            const horasTotalNecessarias = horasFilaTotal + horasPratosTotal;
+            const diasPendentes = capDiaTotal > 0 ? horasTotalNecessarias / capDiaTotal : 0;
+            const cor = diasPendentes === 0 ? C.good : diasPendentes <= 3 ? C.accent2 : diasPendentes <= 7 ? C.warn : C.bad;
             return (
-              <Card key={maq.id}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 15 }}>🖨 {maq.nome}</div>
-                    <div style={{ fontSize: 12, color: C.sub }}>{maq.tipo} · {horasM.toFixed(1)}h na fila</div>
+              <Card>
+                <Label>Visão geral de capacidade</Label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+                  <div style={{ textAlign: "center", padding: "12px 8px", background: C.panel2, borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, color: C.sub }}>Cap. total/dia</div>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20, color: C.ink }}>{capDiaTotal.toFixed(1)}h</div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    {imprimindo ? <span style={{ fontSize: 12, fontWeight: 700, color: C.warn }}>▶ Imprimindo: {imprimindo.id}</span>
-                      : <span style={{ fontSize: 12, color: C.sub }}>Disponível</span>}
+                  <div style={{ textAlign: "center", padding: "12px 8px", background: C.panel2, borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, color: C.sub }}>Horas na fila</div>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20, color: C.warn }}>{horasFilaTotal.toFixed(1)}h</div>
+                  </div>
+                  <div style={{ textAlign: "center", padding: "12px 8px", background: C.panel2, borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, color: C.sub }}>Horas em pratos</div>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20, color: C.blue }}>{horasPratosTotal.toFixed(1)}h</div>
+                  </div>
+                  <div style={{ textAlign: "center", padding: "12px 8px", background: C.bg, border: `2px solid ${cor}`, borderRadius: 10 }}>
+                    <div style={{ fontSize: 11, color: C.sub }}>Dias pendentes</div>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 20, color: cor }}>{diasPendentes.toFixed(1)}d</div>
                   </div>
                 </div>
-                {pratosM.length === 0 && <div style={{ color: C.sub, fontSize: 13 }}>Nenhum prato alocado.</div>}
+                <div style={{ height: 8, background: C.bg, borderRadius: 6, overflow: "hidden", marginBottom: 6 }}>
+                  <div style={{ width: `${Math.min(100, (horasTotalNecessarias / Math.max(horasTotalNecessarias, capDiaTotal * 5)) * 100)}%`, height: "100%", background: cor, borderRadius: 6, transition: "width 0.3s" }} />
+                </div>
+                <div style={{ fontSize: 12, color: C.sub }}>
+                  {diasPendentes === 0 ? "✅ Sem backlog — capacidade disponível" : `${horasTotalNecessarias.toFixed(1)}h necessárias ÷ ${capDiaTotal.toFixed(1)}h/dia = ${diasPendentes.toFixed(1)} dias de impressão pendentes`}
+                </div>
+              </Card>
+            );
+          })()}
+
+          {maquinas.map((maq) => {
+            const pratosM = pratos.filter((p) => p.maquinaId === maq.id && p.status !== "concluido");
+            const horasM = pratosM.reduce((a, p) => a + (p.horasTotal || 0), 0);
+            const capDia = (maq.horasDia || 0) * (maq.eficiencia || 1);
+            const diasMaq = capDia > 0 ? horasM / capDia : 0;
+            const imprimindo = pratosM.find((p) => p.status === "imprimindo");
+            const corMaq = diasMaq === 0 ? C.good : diasMaq <= 2 ? C.accent2 : diasMaq <= 5 ? C.warn : C.bad;
+            return (
+              <Card key={maq.id}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 15 }}>🖨 {maq.nome}</div>
+                    <div style={{ fontSize: 12, color: C.sub }}>{maq.tipo} · Cap: {capDia.toFixed(1)}h/dia</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, color: corMaq }}>{horasM.toFixed(1)}h</div>
+                    <div style={{ fontSize: 11, color: corMaq }}>{diasMaq.toFixed(1)} dias pendentes</div>
+                    {imprimindo && <div style={{ fontSize: 11, color: C.warn, marginTop: 2 }}>▶ {imprimindo.id}</div>}
+                  </div>
+                </div>
+                <div style={{ height: 6, background: C.bg, borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
+                  <div style={{ width: `${Math.min(100, diasMaq > 0 ? Math.min(diasMaq / 10 * 100, 100) : 0)}%`, height: "100%", background: corMaq, borderRadius: 4 }} />
+                </div>
+                {pratosM.length === 0 && <div style={{ color: C.sub, fontSize: 13 }}>Nenhum prato pendente nesta máquina.</div>}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {pratosM.map((p) => {
                     const st = STATUS_PRATO[p.status] || STATUS_PRATO.planejado;
@@ -1830,6 +2008,8 @@ function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos }) 
           })}
         </div>
       )}
+
+      {aba === "avulsa" && <ProducaoAvulsa prodAvulsa={prodAvulsa} setProdAvulsa={setProdAvulsa} maquinas={maquinas} />}
 
       {modalPrato && (
         <ModalNovoPrato itensDisp={itensSelDisp} maquinas={maquinas} onSave={criarPrato} onClose={() => setModalPrato(false)} />
