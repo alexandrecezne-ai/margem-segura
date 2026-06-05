@@ -896,38 +896,6 @@ function Dashboard({ pedidos, fila, produtos, insumos, itensBaixos, go, maquinas
   const margemPonderada = receita > 0 ? lucroTotal / receita : 0;
   const lucroHora = horasMes > 0 ? lucroTotal / horasMes : 0;
 
-  // Sugestões
-  const sugestoes = [];
-  if (fila.aguardando.length) sugestoes.push({ t: `${fila.aguardando.length} pedido(s) parados por falta de insumo — repor já`, go: "estoque", c: C.bad });
-  if (fila.produzir.length) sugestoes.push({ t: `${fila.produzir.length} pedido(s) aguardando produção`, go: "pedidos", c: C.warn });
-  if (fila.embalar.length) sugestoes.push({ t: `${fila.embalar.length} pedido(s) prontos para embalar`, go: "pedidos", c: C.accent2 });
-  if (itensBaixos) sugestoes.push({ t: `${itensBaixos} insumo(s) abaixo do mínimo — repor`, go: "estoque", c: C.bad });
-  const semMargem = produtos.filter((p) => (p.margem || 0) < 15);
-  if (semMargem.length) sugestoes.push({ t: `${semMargem.length} produto(s) com margem < 15% — revisar preço`, go: "catalogo", c: C.warn });
-  if (!sugestoes.length) sugestoes.push({ t: "Operação saudável — tudo em dia ✓", go: "dashboard", c: C.good });
-
-  // Horas de produção no período (pedidos despachados)
-  let lucroTotal = 0, horasMes = 0;
-  const rankMap = {};
-  vendas.forEach((pedido) => {
-    (pedido.itens || []).forEach((item) => {
-      const prod = produtos.find((p) => p.sku === item.sku);
-      const margem = prod ? (prod.margem || 0) / 100 : 0;
-      const horas = prod ? (prod.horasImpressao || 0) : 0;
-      const qtd = item.qtd || 1;
-      const rev = (item.preco || 0) * qtd;
-      const lucro = rev * margem;
-      lucroTotal += lucro;
-      horasMes += horas * qtd;
-      const k = item.sku || item.produto;
-      if (!rankMap[k]) rankMap[k] = { sku: k, nome: item.produto || (prod ? prod.nome : k), qtd: 0, receita: 0, lucro: 0, margem: prod ? prod.margem : 0, horas: 0 };
-      rankMap[k].qtd += qtd; rankMap[k].receita += rev; rankMap[k].lucro += lucro; rankMap[k].horas += horas * qtd;
-    });
-  });
-  const ranking = Object.values(rankMap).sort((a, b) => b.receita - a.receita);
-  const margemPonderada = receita > 0 ? lucroTotal / receita : 0;
-  const lucroHora = horasMes > 0 ? lucroTotal / horasMes : 0;
-
   // Utilização de máquinas no período
   const diasNoPeriodo = { hoje: 1, semana: 7, mes: new Date().getDate(), trimestre: 90, tudo: 30 }[periodo] || 30;
   const utilMaquinas = (maquinas || []).map((m) => {
