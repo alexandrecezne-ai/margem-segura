@@ -569,7 +569,7 @@ function custoHoraMaquina(m) {
   return (m.potenciaKw || 0) * (m.tarifaEnergia || 0) + (m.valor || 0) / (m.vidaUtilH || 1) + (m.manutHora || 0);
 }
 
-function App({ userKey = "default", onLogout }) {
+function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   // ===================== ESTADO GLOBAL (persistido) =====================
   const STORAGE_VERSION = "10";
   const PFX = `ms3d_${userKey}_`;
@@ -597,7 +597,7 @@ function App({ userKey = "default", onLogout }) {
   const [plan, setPlan] = React.useState(LS("plan", "Free"));
   const [adminMode, setAdminMode] = React.useState(false);
   const [nomeUsuario, setNomeUsuario] = React.useState("");
-  const [emailUsuario, setEmailUsuario] = React.useState("");
+  const [emailUsuario, setEmailUsuario] = React.useState(userEmailDireto);
   const syncPlano = React.useCallback(() => {
     getUsuarioByKey(userKey).then((u) => {
       if (!u) return;
@@ -3660,17 +3660,24 @@ function LoginApp() {
   const [session, setSession] = React.useState(() => {
     try { return JSON.parse(sessionStorage.getItem("ms3d_session") || "null"); } catch { return null; }
   });
+  const [sessionEmail, setSessionEmail] = React.useState(() => {
+    try { return sessionStorage.getItem("ms3d_email") || ""; } catch { return ""; }
+  });
   const handleLogin = (email) => {
     const key = emailParaKey(email);
     sessionStorage.setItem("ms3d_session", JSON.stringify(key));
+    sessionStorage.setItem("ms3d_email", email.toLowerCase());
     setSession(key);
+    setSessionEmail(email.toLowerCase());
   };
   const handleLogout = () => {
     sessionStorage.removeItem("ms3d_session");
+    sessionStorage.removeItem("ms3d_email");
     setSession(null);
+    setSessionEmail("");
   };
   if (!session) return <LoginScreen onLogin={handleLogin} />;
-  return <App userKey={session} onLogout={handleLogout} />;
+  return <App userKey={session} userEmailDireto={sessionEmail} onLogout={handleLogout} />;
 }
 
 function useNomeUsuario(userKey) {
