@@ -285,13 +285,13 @@ function criarSolicitacaoPlano(email, planoAtual, planoSolicitado) {
 }
 
 function getSolicitacoesPendentes() {
-  return solicitacoesCol().where("status","==","pendente").get()
-    .then((snap) => snap.docs.map((d) => d.data()));
+  return solicitacoesCol().get()
+    .then((snap) => snap.docs.map((d) => d.data()).filter((s) => s.status === "pendente"));
 }
 
 function getSolicitacoesByEmail(email) {
-  return solicitacoesCol().where("email","==",email).orderBy("criadoTs","desc").limit(1).get()
-    .then((snap) => snap.docs.map((d) => d.data()));
+  return solicitacoesCol().where("email","==",email).get()
+    .then((snap) => snap.docs.map((d) => d.data()).filter((s) => s.status === "pendente"));
 }
 
 function responderSolicitacao(id, aprovado, email, planoSolicitado) {
@@ -302,8 +302,12 @@ function responderSolicitacao(id, aprovado, email, planoSolicitado) {
 }
 
 function cancelarSolicitacaoPendente(email) {
-  return solicitacoesCol().where("email","==",email).where("status","==","pendente").get()
-    .then((snap) => { const batch = db().batch(); snap.docs.forEach((d) => batch.update(d.ref, { status: "cancelado" })); return batch.commit(); });
+  return solicitacoesCol().where("email","==",email).get()
+    .then((snap) => {
+      const batch = db().batch();
+      snap.docs.forEach((d) => { if (d.data().status === "pendente") batch.update(d.ref, { status: "cancelado" }); });
+      return batch.commit();
+    });
 }
 
 // ===================== ERP NO FIRESTORE =====================
