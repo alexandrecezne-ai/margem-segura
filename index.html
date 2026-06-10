@@ -271,6 +271,41 @@ function adminAlterarPlano(email, plano) {
   return setUserPlano(email, plano);
 }
 
+// ===================== SOLICITAÇÕES DE PLANO =====================
+const solicitacoesCol = () => db().collection("solicitacoes_plano");
+
+function criarSolicitacaoPlano(email, planoAtual, planoSolicitado) {
+  const id = emailParaKey(email) + "_" + Date.now();
+  return solicitacoesCol().doc(id).set({
+    id, email, planoAtual, planoSolicitado,
+    status: "pendente",
+    criadoEm: new Date().toLocaleDateString("pt-BR"),
+    criadoTs: Date.now()
+  });
+}
+
+function getSolicitacoesPendentes() {
+  return solicitacoesCol().where("status","==","pendente").get()
+    .then((snap) => snap.docs.map((d) => d.data()));
+}
+
+function getSolicitacoesByEmail(email) {
+  return solicitacoesCol().where("email","==",email).orderBy("criadoTs","desc").limit(1).get()
+    .then((snap) => snap.docs.map((d) => d.data()));
+}
+
+function responderSolicitacao(id, aprovado, email, planoSolicitado) {
+  const patch = { status: aprovado ? "aprovado" : "recusado", respondidoEm: new Date().toLocaleDateString("pt-BR") };
+  return solicitacoesCol().doc(id).update(patch).then(() => {
+    if (aprovado) return setUserPlano(email, planoSolicitado);
+  });
+}
+
+function cancelarSolicitacaoPendente(email) {
+  return solicitacoesCol().where("email","==",email).where("status","==","pendente").get()
+    .then((snap) => { const batch = db().batch(); snap.docs.forEach((d) => batch.update(d.ref, { status: "cancelado" })); return batch.commit(); });
+}
+
 // ===================== ERP NO FIRESTORE =====================
 const erpDoc = (userKey) => db().collection("erp").doc(userKey);
 const ERP_KEYS = ["produtos","insumos","maquinas","orcamentos","pedidos","cond","pratos","prodAvulsa"];
@@ -558,13 +593,22 @@ function App({ userKey = "default", onLogout }) {
   const [plan, setPlan] = React.useState(LS("plan", "Free"));
   const [adminMode, setAdminMode] = React.useState(false);
   const [nomeUsuario, setNomeUsuario] = React.useState("");
-  React.useEffect(() => {
+  const [emailUsuario, setEmailUsuario] = React.useState("");
+  const syncPlano = React.useCallback(() => {
     getUsuarioByKey(userKey).then((u) => {
       if (!u) return;
-      if (u.plano && u.plano !== plan) setPlan(u.plano);
+      setPlan((prev) => (u.plano && u.plano !== prev ? u.plano : prev));
       setAdminMode(isAdmin(u.email));
       if (u.nome) setNomeUsuario(u.nome);
+      if (u.email) setEmailUsuario(u.email);
     });
+  }, [userKey]);
+
+  React.useEffect(() => {
+    syncPlano();
+    // Verifica plano a cada 60s (detecta aprovação do admin sem reload)
+    const timer = setInterval(syncPlano, 60000);
+    return () => clearInterval(timer);
   }, [userKey]);
   const acessos = PLAN_ACCESS[plan] || PLAN_ACCESS["Free"];
   const canAccess = (tabId) => tabId === "admin" ? adminMode : acessos.includes(tabId);
@@ -847,7 +891,7 @@ function App({ userKey = "default", onLogout }) {
         {tab === "admin" && adminMode && <AdminPanel />}
       </main>
 
-      {showPlans && <PlansModal plan={plan} setPlan={setPlan} close={() => setShowPlans(false)} resetDados={resetDados} userKey={userKey} onLogout={onLogout} />}
+      {showPlans && <PlansModal plan={plan} setPlan={setPlan} close={() => setShowPlans(false)} resetDados={resetDados} userKey={userKey} onLogout={onLogout} userEmail={emailUsuario} />}
     </div>
   );
 }
@@ -3183,29 +3227,89 @@ function Academia({ go, plan }) {
 }
 
 // ---------- PLANOS ----------
-function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout }) {
+function PlansModal({ plan, setPlan, close, resetDados, userKey, onLogout, userEmail }) {
   const planos = [
     { nome: "Free", preco: "Grátis", per: "", recursos: ["✓ Calculadora de preço", "✓ Academia (2 aulas)", "✗ Catálogo de produtos", "✗ Orçamentos e Pedidos", "✗ Estoque e Insumos", "✗ Máquinas e Produção"], cor: C.sub },
     { nome: "Pro", preco: "R$ 39", per: "/mês", recursos: ["✓ ERP completo", "✓ Catálogo ilimitado", "✓ Orçamentos e Pedidos", "✓ Insumos + Estoque", "✓ Máquinas e Produção", "✓ ROAS e Kits", "✓ Academia completa"], cor: C.accent, destaque: true },
     { nome: "Studio", preco: "R$ 89", per: "/mês", recursos: ["✓ Tudo do Pro", "✓ Multiusuário", "✓ DRE e relatórios", "✓ Suporte prioritário"], cor: C.accent2 },
   ];
+
+  const [solPendente, setSolPendente] = React.useState(null);
+  const [enviando, setEnviando] = React.useState(false);
+  const [feedback, setFeedback] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!userEmail) return;
+    getSolicitacoesByEmail(userEmail).then((list) => {
+      const pend = list.find((s) => s.status === "pendente");
+      setSolPendente(pend || null);
+    });
+  }, [userEmail]);
+
+  const handleSolicitar = (planoNome) => {
+    if (!userEmail || enviando) return;
+    setEnviando(true);
+    cancelarSolicitacaoPendente(userEmail).then(() => {
+      return criarSolicitacaoPlano(userEmail, plan, planoNome);
+    }).then(() => {
+      setSolPendente({ planoSolicitado: planoNome, status: "pendente" });
+      setFeedback("Solicitação enviada! O administrador irá aprovar em breve.");
+      setEnviando(false);
+    }).catch(() => { setEnviando(false); });
+  };
+
+  const handleCancelar = () => {
+    if (!userEmail) return;
+    cancelarSolicitacaoPendente(userEmail).then(() => {
+      setSolPendente(null);
+      setFeedback(null);
+    });
+  };
+
   return (
     <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 18, padding: 28, maxWidth: 760, width: "100%" }}>
         <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22, marginBottom: 4 }}>Escolha seu plano</div>
-        <div style={{ color: C.sub, fontSize: 14, marginBottom: 22 }}>Assinatura mensal · cancele quando quiser</div>
+        <div style={{ color: C.sub, fontSize: 14, marginBottom: 22 }}>Mudanças de plano requerem aprovação do administrador.</div>
+
+        {feedback && (
+          <div style={{ background: `${C.good}22`, border: `1px solid ${C.good}`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.good, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>✓ {feedback}</span>
+            <button onClick={() => setFeedback(null)} style={{ background: "none", border: "none", color: C.sub, cursor: "pointer", fontSize: 16 }}>×</button>
+          </div>
+        )}
+
+        {solPendente && (
+          <div style={{ background: `${C.warn}18`, border: `1px solid ${C.warn}`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.warn, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <span>⏳ Solicitação de upgrade para <b>{solPendente.planoSolicitado}</b> aguardando aprovação.</span>
+            <button onClick={handleCancelar} style={{ background: "transparent", border: `1px solid ${C.warn}`, color: C.warn, padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancelar solicitação</button>
+          </div>
+        )}
+
         <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
-          {planos.map((p) => (
-            <div key={p.nome} style={{ background: C.panel, border: `1.5px solid ${p.destaque ? C.accent : C.line}`, borderRadius: 14, padding: 18, position: "relative" }}>
-              {p.destaque && <div style={{ position: "absolute", top: -10, right: 14, background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 8 }}>POPULAR</div>}
-              <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, color: p.cor }}>{p.nome}</div>
-              <div style={{ margin: "6px 0 14px" }}><span style={{ fontSize: 26, fontWeight: 800, fontFamily: "Sora" }}>{p.preco}</span><span style={{ color: C.sub, fontSize: 13 }}>{p.per}</span></div>
-              {p.recursos.map((rc, i) => <div key={i} style={{ fontSize: 13, color: C.sub, marginBottom: 6 }}>✓ {rc}</div>)}
-              <button onClick={() => { setPlan(p.nome); close(); }} disabled={plan === p.nome}
-                style={{ width: "100%", marginTop: 12, background: plan === p.nome ? C.line : p.destaque ? C.accent : "transparent", border: `1px solid ${p.destaque ? C.accent : C.line}`, color: plan === p.nome ? C.sub : p.destaque ? "#1a1207" : C.ink, padding: "9px", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: plan === p.nome ? "default" : "pointer", fontFamily: "inherit" }}>
-                {plan === p.nome ? "Plano atual" : "Selecionar"}</button>
-            </div>
-          ))}
+          {planos.map((p) => {
+            const ehAtual = plan === p.nome;
+            const solicitado = solPendente && solPendente.planoSolicitado === p.nome;
+            let btnLabel = "Solicitar";
+            let btnDisabled = false;
+            let btnBg = p.destaque ? C.accent : "transparent";
+            let btnColor = p.destaque ? "#1a1207" : C.ink;
+            if (ehAtual) { btnLabel = "Plano atual"; btnDisabled = true; btnBg = C.line; btnColor = C.sub; }
+            else if (solicitado) { btnLabel = "⏳ Aguardando"; btnDisabled = true; btnBg = `${C.warn}30`; btnColor = C.warn; }
+            else if (solPendente) { btnDisabled = true; }
+            return (
+              <div key={p.nome} style={{ background: C.panel, border: `1.5px solid ${p.destaque ? C.accent : C.line}`, borderRadius: 14, padding: 18, position: "relative" }}>
+                {p.destaque && <div style={{ position: "absolute", top: -10, right: 14, background: C.accent, color: "#1a1207", fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 8 }}>POPULAR</div>}
+                <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 18, color: p.cor }}>{p.nome}</div>
+                <div style={{ margin: "6px 0 14px" }}><span style={{ fontSize: 26, fontWeight: 800, fontFamily: "Sora" }}>{p.preco}</span><span style={{ color: C.sub, fontSize: 13 }}>{p.per}</span></div>
+                {p.recursos.map((rc, i) => <div key={i} style={{ fontSize: 13, color: C.sub, marginBottom: 6 }}>{rc}</div>)}
+                <button onClick={() => handleSolicitar(p.nome)} disabled={btnDisabled || enviando}
+                  style={{ width: "100%", marginTop: 12, background: btnBg, border: `1px solid ${p.destaque ? C.accent : C.line}`, color: btnColor, padding: "9px", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: btnDisabled ? "default" : "pointer", fontFamily: "inherit", opacity: (btnDisabled && !ehAtual && !solicitado) ? 0.4 : 1 }}>
+                  {enviando ? "Enviando..." : btnLabel}
+                </button>
+              </div>
+            );
+          })}
         </div>
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -3232,14 +3336,25 @@ function AdminPanel() {
   const [loadingUsers, setLoadingUsers] = React.useState(true);
   const [senhaReset, setSenhaReset] = React.useState(null);
   const [confirm, setConfirm] = React.useState(null);
+  const [solicitacoes, setSolicitacoes] = React.useState([]);
+  const [respondendo, setRespondendo] = React.useState(null);
   const planos = ["Free", "Pro", "Studio"];
 
   const refresh = () => {
     setLoadingUsers(true);
     getUsuarios().then((list) => { setUsers(list); setLoadingUsers(false); });
+    getSolicitacoesPendentes().then((list) => setSolicitacoes(list));
   };
 
   React.useEffect(() => { refresh(); }, []);
+
+  const handleResponder = (sol, aprovado) => {
+    setRespondendo(sol.id);
+    responderSolicitacao(sol.id, aprovado, sol.email, sol.planoSolicitado).then(() => {
+      setRespondendo(null);
+      refresh();
+    }).catch(() => setRespondendo(null));
+  };
 
   const handleAlterarPlano = (email, plano) => {
     adminAlterarPlano(email, plano).then(refresh);
@@ -3341,8 +3456,47 @@ function AdminPanel() {
         ))}
       </div>
 
+      {/* ---- SOLICITAÇÕES DE PLANO PENDENTES ---- */}
+      <div style={{ marginTop: 28 }}>
+        <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 16, marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          Solicitações de Plano
+          {solicitacoes.length > 0 && <span style={{ background: C.warn, color: "#1a1207", fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 10 }}>{solicitacoes.length}</span>}
+        </div>
+        {solicitacoes.length === 0 ? (
+          <div style={{ padding: "16px", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, fontSize: 13, color: C.sub, textAlign: "center" }}>
+            Nenhuma solicitação pendente.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {solicitacoes.map((sol) => (
+              <div key={sol.id} style={{ background: C.panel, border: `1px solid ${C.warn}55`, borderRadius: 12, padding: "14px 16px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 3 }}>{sol.email}</div>
+                  <div style={{ fontSize: 12, color: C.sub }}>
+                    De: <b style={{ color: C.ink }}>{sol.planoAtual || "Free"}</b>
+                    {" → "}
+                    <b style={{ color: C.accent }}>{sol.planoSolicitado}</b>
+                    <span style={{ marginLeft: 10 }}>· {sol.criadoEm}</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => handleResponder(sol, false)} disabled={respondendo === sol.id}
+                    style={{ background: "transparent", border: `1px solid ${C.bad}`, color: C.bad, padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    ✕ Recusar
+                  </button>
+                  <button onClick={() => handleResponder(sol, true)} disabled={respondendo === sol.id}
+                    style={{ background: C.good, border: "none", color: "#0a1a0a", padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    {respondendo === sol.id ? "..." : "✓ Aprovar"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div style={{ marginTop: 16, padding: "12px 16px", background: C.panel2, borderRadius: 10, fontSize: 12, color: C.sub }}>
-        💡 Alterações de plano têm efeito imediato. O usuário verá o novo acesso no próximo login ou ao recarregar a página.
+        💡 Mudanças de plano via painel admin têm efeito imediato. Solicitações do usuário ficam pendentes até sua aprovação.
       </div>
     </div>
   );
