@@ -69,11 +69,11 @@ const PERFIS_MANUT = [
   { perfil: "Perfil Manual", manutHora: 0.15, vidaUtil: 5000 },
 ];
 const CANAIS = [
-  { nome: "Venda direta", comissao: 0, pgto: 0.04, tarifa: 0, ads: 0.12, frete: 0, seg: 0.03 },
-  { nome: "Mercado Livre", comissao: 0.16, pgto: 0, tarifa: 3, ads: 0.1, frete: 0, seg: 0.03 },
-  { nome: "Shopee", comissao: 0.2, pgto: 0, tarifa: 4, ads: 0.08, frete: 0, seg: 0.03 },
-  { nome: "Amazon", comissao: 0.15, pgto: 0, tarifa: 2, ads: 0.1, frete: 0, seg: 0.03 },
-  { nome: "Magalu", comissao: 0.18, pgto: 0, tarifa: 0, ads: 0.08, frete: 0, seg: 0.03 },
+  { nome: "Venda direta", comissao: 0, pgto: 0.04, tarifa: 0, ads: 0.12, frete: 0, seg: 0.03, repasseDias: 0 },
+  { nome: "Mercado Livre", comissao: 0.16, pgto: 0, tarifa: 3, ads: 0.1, frete: 0, seg: 0.03, repasseDias: 21 },
+  { nome: "Shopee", comissao: 0.2, pgto: 0, tarifa: 4, ads: 0.08, frete: 0, seg: 0.03, repasseDias: 14 },
+  { nome: "Amazon", comissao: 0.15, pgto: 0, tarifa: 2, ads: 0.1, frete: 0, seg: 0.03, repasseDias: 14 },
+  { nome: "Magalu", comissao: 0.18, pgto: 0, tarifa: 0, ads: 0.08, frete: 0, seg: 0.03, repasseDias: 14 },
 ];
 // Regimes de imposto (taxa padrão sugerida — editável)
 const IMPOSTOS = [
@@ -107,14 +107,31 @@ const PEDIDOS_SEED  = [];
 // Modelo padrão de condições comerciais (editável)
 const COND_SEED = { sinal: 50, prazoProducao: "5 dias úteis", prazoEntrega: "3 dias úteis após produção", validade: "7 dias", pagamento: "Pix ou cartão; sinal para iniciar a produção", empresa: "", contatoEmpresa: "" };
 
+// Configurações globais do usuário (aba Configurações)
+const CONFIG_SEED = {
+  // Mão de obra: "hora" = valor direto | "salario" = derivado de salário mensal
+  moModo: "hora",
+  moHoraDireta: 25,
+  salarioBase: 2500, encargosMult: 1.3, horasMes: 176, pctProdutivo: 0.65,
+  // Parâmetros de precificação (defaults globais)
+  lucroAlvoRS: 15, markupPremium: 0.15, tarifaEnergia: 0.9,
+  impostoRegime: "Simples Nacional", impostoTaxa: 0.06,
+  // Canais padrão do usuário (com prazo de repasse em dias — base do futuro módulo Caixa)
+  canais: JSON.parse(JSON.stringify(CANAIS)),
+  // Financeiro: distribuição mensal (cascata do pró-labore)
+  fin: { proLabore: 2500, reservaPct: 0.05, custosFixos: [] },
+  // Cartão (venda direta): taxas da maquininha/gateway e prazo de repasse
+  cartao: { taxaDebito: 0.0199, taxaVista: 0.0349, taxaParcela: 0.0449, repasseDias: 30, porParcela: true },
+};
+
 // Administrador
 const ADMIN_EMAIL = "alexandre.cezne@gmail.com";
 
 // Acesso por plano
 const PLAN_ACCESS = {
-  Free:   ["dashboard", "calc", "academia"],
-  Pro:    ["dashboard", "calc", "catalogo", "orcamentos", "pedidos", "estoque", "maquinas", "producao", "roas", "kits", "academia"],
-  Studio: ["dashboard", "calc", "catalogo", "orcamentos", "pedidos", "estoque", "maquinas", "producao", "roas", "kits", "academia"],
+  Free:   ["dashboard", "calc", "academia", "config"],
+  Pro:    ["dashboard", "calc", "catalogo", "orcamentos", "pedidos", "estoque", "maquinas", "producao", "roas", "kits", "fin", "academia", "config"],
+  Studio: ["dashboard", "calc", "catalogo", "orcamentos", "pedidos", "estoque", "maquinas", "producao", "roas", "kits", "fin", "academia", "config"],
 };
 
 // Helpers
@@ -340,19 +357,29 @@ function zerarUsuario(userKey) {
 }
 
 // monta o texto do orçamento (compartilhado por WhatsApp e PDF)
+// Totais do orçamento com desconto (modo "rs" = valor em reais; "pct" = fração, ex. 0.10)
+function calcTotalOrc(o) {
+  const subtotal = (o.itens || []).reduce((a, it) => a + (it.preco || 0) * (it.qtd || 1), 0);
+  const modo = o.descontoModo || "rs";
+  const v = o.descontoValor || 0;
+  const desconto = Math.min(subtotal, Math.max(0, modo === "pct" ? subtotal * v : v));
+  return { subtotal: round2(subtotal), desconto: round2(desconto), total: round2(Math.max(0, subtotal - desconto)) };
+}
 function textoOrcamento(o, cond) {
   const linhas = (o.itens || []).map((it) => `• ${it.qtd}x ${it.nome}${it.cor ? " (" + it.cor + ")" : ""} — ${brl(it.preco)} un = ${brl(it.preco * it.qtd)}`);
-  const total = (o.itens || []).reduce((a, it) => a + it.preco * it.qtd, 0);
-  return { linhas, total };
+  const t = calcTotalOrc(o);
+  return { linhas, subtotal: t.subtotal, desconto: t.desconto, total: t.total };
 }
 function enviarWhats(o, cond) {
-  const { linhas, total } = textoOrcamento(o, cond);
+  const { linhas, subtotal, desconto, total } = textoOrcamento(o, cond);
   const empresa = (cond && cond.empresa) || "";
   const partes = [];
   if (empresa) partes.push(`*${empresa}*`);
   partes.push(`*Orçamento ${o.id}*`);
   if (o.cliente) partes.push(`Cliente: ${o.cliente}`);
-  partes.push("", ...linhas, "", `*Total: ${brl(total)}*`, "");
+  partes.push("", ...linhas, "");
+  if (desconto > 0) { partes.push(`Subtotal: ${brl(subtotal)}`, `Desconto: −${brl(desconto)}`); }
+  partes.push(`*Total: ${brl(total)}*`, "");
   partes.push(`Sinal: ${o.sinal || 0}% para iniciar a produção`);
   partes.push(`Pagamento: ${o.pagamento || ""}`);
   partes.push(`Produção: ${o.prazoProducao || ""}`);
@@ -365,7 +392,7 @@ function enviarWhats(o, cond) {
   window.open(url, "_blank");
 }
 function exportarPDF(o, cond) {
-  const { linhas, total } = textoOrcamento(o, cond);
+  const { linhas, subtotal, desconto, total } = textoOrcamento(o, cond);
   const empresa = (cond && cond.empresa) || "Orçamento";
   const itensHtml = (o.itens || []).map((it) => `<tr><td>${it.qtd}</td><td>${it.nome}${it.cor ? " <span style='color:#777'>(" + it.cor + ")</span>" : ""}</td><td style="text-align:right">${brl(it.preco)}</td><td style="text-align:right">${brl(it.preco * it.qtd)}</td></tr>`).join("");
   const sinalRS = total * ((o.sinal || 0) / 100);
@@ -389,7 +416,7 @@ function exportarPDF(o, cond) {
   <div style="text-align:right;font-size:13px;color:#666">${o.cliente ? "Cliente:<br><b style='color:#000'>" + o.cliente + "</b>" : ""}</div></div>
   <table><thead><tr><th>Qtd</th><th>Produto</th><th style="text-align:right">Preço un.</th><th style="text-align:right">Subtotal</th></tr></thead>
   <tbody>${itensHtml}</tbody></table>
-  <div class="total">Total: ${brl(total)}</div>
+  <div class="total">${desconto > 0 ? `<div style="font-size:13px;font-weight:normal;color:#555">Subtotal: ${brl(subtotal)} &nbsp;·&nbsp; Desconto: −${brl(desconto)}</div>` : ""}Total: ${brl(total)}</div>
   <div class="cond">
     <div><b>Sinal:</b> ${o.sinal || 0}% (${brl(sinalRS)}) para iniciar a produção</div>
     <div><b>Forma de pagamento:</b> ${o.pagamento || "—"}</div>
@@ -488,11 +515,14 @@ function calcular(input, ctx) {
   const usarSeg = input.usarSeg !== false;
 
   // ---- PREÇOS POR CANAL ----
-  const canaisAtivos = (input.canaisCustom && input.canaisCustom.length) ? input.canaisCustom : CANAIS;
+  const cfg = ctx.config || null;
+  const canaisAtivos = (input.canaisCustom && input.canaisCustom.length) ? input.canaisCustom
+    : (cfg && cfg.canais && cfg.canais.length ? cfg.canais : CANAIS);
   const lucroAlvoModo = input.lucroAlvoModo || "rs";
-  const lucroAlvoRS = lucroAlvoModo === "rs" ? (input.lucroAlvoValor != null ? input.lucroAlvoValor : CFG.lucroAlvoRS) : 0;
+  const lucroAlvoRS = lucroAlvoModo === "rs" ? (input.lucroAlvoValor != null ? input.lucroAlvoValor : (cfg && cfg.lucroAlvoRS != null ? cfg.lucroAlvoRS : CFG.lucroAlvoRS)) : 0;
   const lucroAlvoPct = lucroAlvoModo === "pct" ? (input.lucroAlvoValor || 0.15) : 0;
-  const cenarios = canaisAtivos.map((c) => precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlvoRS, lucroAlvoPct, lucroAlvoModo));
+  const mkPremium = cfg && cfg.markupPremium != null ? cfg.markupPremium : CFG.markupPremium;
+  const cenarios = canaisAtivos.map((c) => precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlvoRS, lucroAlvoPct, lucroAlvoModo, mkPremium));
   const canalRef = input.canalRef || "Mercado Livre";
   const ref = cenarios.find((x) => x.nome === canalRef) || cenarios[0];
   const canal = canaisAtivos.find((c) => c.nome === canalRef) || canaisAtivos[1] || canaisAtivos[0];
@@ -537,7 +567,7 @@ function calcular(input, ctx) {
     margemAntesAds, acosMax, roasMeta, investMaxVenda,
     custoEnergia: custoOperacional, custoMaquinaPeca: 0 };
 }
-function precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlvoRS, lucroAlvoPct, lucroAlvoModo) {
+function precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlvoRS, lucroAlvoPct, lucroAlvoModo, mkPremium) {
   const ads = usarAds === false ? 0 : c.ads;
   const seg = usarSeg === false ? 0 : c.seg;
   const totalPct = c.comissao + c.pgto + ads + (taxaImposto || 0) + seg;
@@ -551,8 +581,31 @@ function precoDoCanal(custoTotalPeca, c, taxaImposto, usarAds, usarSeg, lucroAlv
   } else {
     precoSaudavel = (baseMaisTarifa + (lucroAlvoRS != null ? lucroAlvoRS : CFG.lucroAlvoRS)) / (1 - totalPct);
   }
-  const precoPremium = precoSaudavel * (1 + CFG.markupPremium);
+  const precoPremium = precoSaudavel * (1 + (mkPremium != null ? mkPremium : CFG.markupPremium));
   return { nome: c.nome, totalPct, baseMaisTarifa, precoMinimo, precoSaudavel, precoPremium };
+}
+// Recalcula os campos derivados de um produto do catálogo (preços de referência e margem)
+// usando os canais das Configurações e o lucro-alvo salvo no próprio produto.
+function recalcProduto(prod, config) {
+  const canais = (config && config.canais && config.canais.length) ? config.canais : CANAIS;
+  const c = canais.find((x) => x.nome === prod.canal) || canais[0];
+  const lvModo = prod.lucroAlvoModo || "rs";
+  const lvVal = prod.lucroAlvoValor != null ? prod.lucroAlvoValor : (config && config.lucroAlvoRS != null ? config.lucroAlvoRS : CFG.lucroAlvoRS);
+  const mk = config && config.markupPremium != null ? config.markupPremium : CFG.markupPremium;
+  const cen = precoDoCanal(prod.custo || 0, c, prod.impostoTaxa != null ? prod.impostoTaxa : 0.06, prod.usarAds !== false, prod.usarSeg !== false,
+    lvModo === "rs" ? lvVal : 0, lvModo === "pct" ? lvVal : 0, lvModo, mk);
+  const preco = prod.precoPraticado || cen.precoSaudavel;
+  const lucro = preco - cen.baseMaisTarifa - preco * cen.totalPct;
+  return { ...prod,
+    precoMin: round2(cen.precoMinimo), precoSaudavel: round2(cen.precoSaudavel), precoPremium: round2(cen.precoPremium),
+    margem: round2((preco ? lucro / preco : 0) * 100) };
+}
+// Composição de custos de um produto do catálogo, com fallback para itens antigos
+// (sem detalhamento: produção = custo total e logística = 0, para nunca inventar economia)
+function custosProduto(p) {
+  if (!p) return { producao: 0, logistico: 0, det: null };
+  if (p.custoProducao != null) return { producao: p.custoProducao, logistico: p.custoLogistico || 0, det: p.custoDet || null };
+  return { producao: p.custo || 0, logistico: 0, det: null };
 }
 // custo médio por TIPO de material (PLA, PETG...), ponderado por estoque
 function custoMedioMaterial(insumos, tipo) {
@@ -568,6 +621,36 @@ function custoHoraMaquina(m) {
   if (!m) return 0;
   return (m.potenciaKw || 0) * (m.tarifaEnergia || 0) + (m.valor || 0) / (m.vidaUtilH || 1) + (m.manutHora || 0);
 }
+// custo-hora de mão de obra conforme as Configurações:
+// modo "hora" = valor direto | modo "salario" = (salário × encargos) / horas produtivas do mês
+function custoHoraEfetivo(cfg) {
+  if (!cfg) return CFG.horaOperacional;
+  if (cfg.moModo === "salario") {
+    const horasProd = (cfg.horasMes || 176) * (cfg.pctProdutivo || 0.65);
+    return horasProd > 0 ? ((cfg.salarioBase || 0) * (cfg.encargosMult || 1)) / horasProd : 0;
+  }
+  return cfg.moHoraDireta != null ? cfg.moHoraDireta : CFG.horaOperacional;
+}
+// ---- Helpers de data (módulo Financeiro) ----
+function addDias(d, n) { const x = new Date(d); x.setDate(x.getDate() + (n || 0)); return x; }
+function fmtBR(d) { return d ? d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—"; }
+function mesKeyOf(d) { return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : ""; }
+function mesLabel(key) {
+  if (!key) return "";
+  const [y, m] = key.split("-");
+  const nomes = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+  return `${nomes[parseInt(m) - 1]}/${y}`;
+}
+// Taxa de pagamento de um pedido: se há forma registrada (venda direta), usa as taxas do cartão;
+// senão, usa a taxa de pagamento padrão do canal.
+function taxaPgtoPedido(pg, canal, cartao) {
+  if (!pg || !pg.forma) return (canal && canal.pgto) || 0;
+  const cart = cartao || {};
+  if (pg.forma === "credito") return (pg.parcelas || 1) > 1 ? (cart.taxaParcela != null ? cart.taxaParcela : 0.0449) : (cart.taxaVista != null ? cart.taxaVista : 0.0349);
+  if (pg.forma === "debito") return cart.taxaDebito != null ? cart.taxaDebito : 0.0199;
+  return 0; // pix / dinheiro
+}
+const FORMAS_PGTO = { pix: "Pix", dinheiro: "Dinheiro", debito: "Cartão débito", credito: "Cartão crédito" };
 
 function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   // ===================== ESTADO GLOBAL (persistido) =====================
@@ -588,9 +671,9 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   };
   const save = (k, v) => { try { localStorage.setItem(PFX + k, JSON.stringify(v)); } catch {} };
   const resetDados = () => {
-    ["produtos","insumos","maquinas","orcamentos","pedidos","cond"].forEach((k) => localStorage.removeItem(PFX + k));
+    ["produtos","insumos","maquinas","orcamentos","pedidos","cond","config","lancamentos"].forEach((k) => localStorage.removeItem(PFX + k));
     erpDoc(userKey).delete().catch(() => {});
-    setProdutos(PRODUTOS_SEED); setInsumos(INSUMOS_SEED); setMaquinas(MAQUINAS_SEED); setOrcamentos(ORC_SEED); setPedidos(PEDIDOS_SEED); setCond(COND_SEED);
+    setProdutos(PRODUTOS_SEED); setInsumos(INSUMOS_SEED); setMaquinas(MAQUINAS_SEED); setOrcamentos(ORC_SEED); setPedidos(PEDIDOS_SEED); setCond(COND_SEED); setConfig(JSON.parse(JSON.stringify(CONFIG_SEED))); setLancamentos([]);
   };
 
   const [tab, setTab] = React.useState("dashboard");
@@ -624,6 +707,8 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   const [orcamentos, setOrcamentos] = React.useState(() => LS("orcamentos", ORC_SEED));
   const [pedidos, setPedidos] = React.useState(() => LS("pedidos", PEDIDOS_SEED));
   const [cond, setCond] = React.useState(() => LS("cond", COND_SEED));
+  const [config, setConfig] = React.useState(() => ({ ...JSON.parse(JSON.stringify(CONFIG_SEED)), ...LS("config", {}) }));
+  const [lancamentos, setLancamentos] = React.useState(() => LS("lancamentos", []));
   const [pratos, setPratos] = React.useState(() => LS("pratos", []));
   const [prodAvulsa, setProdAvulsa] = React.useState(() => LS("prodAvulsa", []));
   const erpReady = React.useRef(false);
@@ -638,6 +723,8 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
       if (data.orcamentos !== undefined) setOrcamentos(data.orcamentos);
       if (data.pedidos !== undefined) setPedidos(data.pedidos);
       if (data.cond !== undefined) setCond(data.cond);
+      if (data.config !== undefined) setConfig({ ...JSON.parse(JSON.stringify(CONFIG_SEED)), ...data.config });
+      if (data.lancamentos !== undefined) setLancamentos(data.lancamentos);
       if (data.pratos !== undefined) setPratos(data.pratos);
       if (data.prodAvulsa !== undefined) setProdAvulsa(data.prodAvulsa);
     }).finally(() => { erpReady.current = true; });
@@ -652,6 +739,8 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   React.useEffect(() => { save("maquinas", maquinas); if (erpReady.current) saveErpField(userKey, "maquinas", maquinas); }, [maquinas]);
   React.useEffect(() => { save("orcamentos", orcamentos); if (erpReady.current) saveErpField(userKey, "orcamentos", orcamentos); }, [orcamentos]);
   React.useEffect(() => { save("cond", cond); if (erpReady.current) saveErpField(userKey, "cond", cond); }, [cond]);
+  React.useEffect(() => { save("config", config); if (erpReady.current) saveErpField(userKey, "config", config); }, [config]);
+  React.useEffect(() => { save("lancamentos", lancamentos); if (erpReady.current) saveErpField(userKey, "lancamentos", lancamentos); }, [lancamentos]);
   React.useEffect(() => { save("pedidos", pedidos); if (erpReady.current) saveErpField(userKey, "pedidos", pedidos); }, [pedidos]);
   React.useEffect(() => { save("pratos", pratos); if (erpReady.current) saveErpField(userKey, "pratos", pratos); }, [pratos]);
   React.useEffect(() => { save("prodAvulsa", prodAvulsa); if (erpReady.current) saveErpField(userKey, "prodAvulsa", prodAvulsa); }, [prodAvulsa]);
@@ -685,7 +774,35 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
     kitQtd: 3, kitDesconto: 0.08, kitEmbExtra: 1.75, kitBrindeExtra: 1,
   });
   const set = (k, v) => setInput((s) => ({ ...s, [k]: v }));
-  const r = React.useMemo(() => calcular(input, { insumos, maquinas }), [input, insumos, maquinas]);
+  const r = React.useMemo(() => calcular(input, { insumos, maquinas, config }), [input, insumos, maquinas, config]);
+
+  // ===================== BACKUP (exportar / importar JSON) =====================
+  const exportarBackup = () => {
+    const data = { app: "MargemSegura3D", versao: STORAGE_VERSION, exportadoEm: new Date().toISOString(),
+      produtos, insumos, maquinas, orcamentos, pedidos, cond, pratos, prodAvulsa, config, lancamentos };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const d = new Date(); const pad = (n) => String(n).padStart(2, "0");
+    a.download = `ms3d-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+    a.click(); URL.revokeObjectURL(a.href);
+  };
+  const importarBackup = (obj) => {
+    if (!obj || obj.app !== "MargemSegura3D") { alert("Arquivo inválido. Selecione um backup gerado pelo Margem Segura 3D."); return false; }
+    if (!confirm("Importar este backup vai SUBSTITUIR todos os dados atuais. Continuar?")) return false;
+    if (obj.produtos) setProdutos(obj.produtos);
+    if (obj.insumos) setInsumos(obj.insumos);
+    if (obj.maquinas) setMaquinas(obj.maquinas);
+    if (obj.orcamentos) setOrcamentos(obj.orcamentos);
+    if (obj.pedidos) setPedidos(obj.pedidos);
+    if (obj.cond) setCond(obj.cond);
+    if (obj.pratos) setPratos(obj.pratos);
+    if (obj.prodAvulsa) setProdAvulsa(obj.prodAvulsa);
+    if (obj.config) setConfig({ ...JSON.parse(JSON.stringify(CONFIG_SEED)), ...obj.config });
+    if (obj.lancamentos) setLancamentos(obj.lancamentos);
+    alert("Backup importado com sucesso ✓");
+    return true;
+  };
 
   const kit = React.useMemo(() => {
     const precoKit = r.precoSaudavel * input.kitQtd * (1 - input.kitDesconto);
@@ -725,6 +842,11 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
       matTipo: input.matTipo, custoMatUn: round2(r.custoMatUn * 1000) / 1000,
       cores: input.coresAtivo ? (input.cores || []).filter((c) => c.cor) : [],
       impostoTaxa: r.taxaImposto, usarAds: r.usarAds, usarSeg: r.usarSeg,
+      lucroAlvoModo: input.lucroAlvoModo || "rs",
+      lucroAlvoValor: input.lucroAlvoValor != null ? input.lucroAlvoValor : (config && config.lucroAlvoRS != null ? config.lucroAlvoRS : 15),
+      // composição de custos (para kit/atacado separarem produção de logística)
+      custoProducao: round2(r.custoProducao), custoLogistico: round2(r.custoLogistico),
+      custoDet: { material: round2(r.custoMaterial), maquina: round2(r.custoOperacional), mo: round2(r.custoMaoObra), acessorios: round2(r.custoAcessorios), falhasPct: input.taxaFalhas || 0 },
     };
     setProdutos((p) => [...p, novo]);
     setTab("catalogo");
@@ -763,10 +885,15 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   };
 
   // 4) Orçamento aprovado vira pedido (com todos os itens)
-  const aprovarOrcamento = (orc) => {
-    setOrcamentos((o) => o.map((x) => x.id === orc.id ? { ...x, status: "Aprovado" } : x));
-    criarPedido({ cliente: orc.cliente, canal: "Venda direta", origem: "Orçamento " + orc.id,
-      itens: orc.itens.map((it) => ({ sku: it.sku, produto: it.nome, qtd: it.qtd, cor: it.cor, preco: it.preco })) });
+  const aprovarOrcamento = (orc, pgto) => {
+    const p = pgto || { canal: "Venda direta", forma: "", parcelas: 1, pago: false };
+    setOrcamentos((o) => o.map((x) => x.id === orc.id ? { ...x, status: "Aprovado", formaPagamento: p.forma, parcelasPgto: p.parcelas } : x));
+    const pagamento = p.forma ? { forma: p.forma, parcelas: Math.max(1, Math.round(p.parcelas || 1)), pago: !!p.pago, dataVenda: hoje() } : null;
+    // desconto do orçamento rateado proporcionalmente nos preços (pedido carrega a receita real)
+    const t = calcTotalOrc(orc);
+    const fator = t.subtotal > 0 ? t.total / t.subtotal : 1;
+    criarPedido({ cliente: orc.cliente, canal: p.canal || "Venda direta", origem: "Orçamento " + orc.id, pagamento,
+      itens: orc.itens.map((it) => ({ sku: it.sku, produto: it.nome, qtd: it.qtd, cor: it.cor, preco: round2((it.preco || 0) * fator) })) });
   };
 
   // 4/5) Criar pedido (multi-itens) + gate de estoque por item
@@ -781,6 +908,13 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
       prioridade: base.prioridade || "Normal", etapa, data: hoje(),
       itens: itens.map(({ temPronto, temInsumo, ...keep }) => keep),
     };
+    if (base.pagamento) {
+      ped.pagamento = base.pagamento;
+      // Pix/dinheiro já cobrado = dinheiro em mãos: marca como recebido no caixa
+      if (base.pagamento.pago && (base.pagamento.forma === "pix" || base.pagamento.forma === "dinheiro")) {
+        ped.parcelasPagas = { 1: hoje() };
+      }
+    }
     // baixa produto pronto dos itens que tinham estoque
     itens.filter((i) => i.temPronto).forEach((i) => {
       setProdutos((ps) => ps.map((p) => p.sku === i.sku ? { ...p, estoquePronto: p.estoquePronto - i.qtd } : p));
@@ -827,9 +961,12 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
     { id: "maquinas", label: "Máquinas", icon: "🖨" },
     { id: "producao", label: "Produção", icon: "⚙" },
     { sep: "ANÁLISE" },
+    { id: "fin", label: "Financeiro", icon: "💰" },
     { id: "roas", label: "ROAS", icon: "📣" },
     { id: "kits", label: "Kitficação", icon: "▣" },
     { id: "academia", label: "Academia", icon: "🎓" },
+    { sep: "SISTEMA" },
+    { id: "config", label: "Configurações", icon: "🛠" },
     ...(adminMode ? [{ sep: "ADMIN" }, { id: "admin", label: "Painel Admin", icon: "🛡" }] : []),
   ];
 
@@ -881,17 +1018,19 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
       </aside>
 
       <main className="main" style={{ flex: 1, padding: "24px 28px", maxWidth: 1150, minWidth: 0 }}>
-        {tab === "dashboard" && <Dashboard pedidos={pedidos} fila={fila} produtos={produtos} insumos={insumos} itensBaixos={itensBaixos} go={setTab} maquinas={maquinas} pratos={pratos} />}
-        {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
-        {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} />}
-        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} />}
-        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} />}
+        {tab === "dashboard" && <Dashboard pedidos={pedidos} fila={fila} produtos={produtos} insumos={insumos} itensBaixos={itensBaixos} go={setTab} maquinas={maquinas} pratos={pratos} config={config} />}
+        {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} config={config} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
+        {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} config={config} />}
+        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} />}
+        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
-        {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} />}
+        {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} config={config} />}
         {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} setPedidos={setPedidos} setInsumos={setInsumos} insumos={insumos} prodAvulsa={prodAvulsa} setProdAvulsa={setProdAvulsa} />}
-        {tab === "roas" && <Roas r={r} produtos={produtos} />}
-        {tab === "kits" && <Kits input={input} set={set} r={r} kit={kit} produtos={produtos} />}
+        {tab === "roas" && <Roas r={r} produtos={produtos} config={config} />}
+        {tab === "fin" && <Financeiro pedidos={pedidos} setPedidos={setPedidos} produtos={produtos} config={config} setConfig={setConfig} lancamentos={lancamentos} setLancamentos={setLancamentos} />}
+        {tab === "kits" && <Kits produtos={produtos} config={config} />}
         {tab === "academia" && <Academia go={setTab} plan={plan} />}
+        {tab === "config" && <Configuracoes config={config} setConfig={setConfig} cond={cond} setCond={setCond} resetDados={resetDados} exportarBackup={exportarBackup} importarBackup={importarBackup} />}
         {tab === "admin" && adminMode && <AdminPanel />}
       </main>
 
@@ -905,7 +1044,7 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
 // ============================================================
 
 // ---------- DASHBOARD (centro de controle) ----------
-function Dashboard({ pedidos, fila, produtos, insumos, itensBaixos, go, maquinas, pratos }) {
+function Dashboard({ pedidos, fila, produtos, insumos, itensBaixos, go, maquinas, pratos, config }) {
   const [periodo, setPeriodo] = React.useState("mes");
   const PERIODOS = [["hoje","Hoje"],["semana","7 dias"],["mes","Este mês"],["trimestre","3 meses"],["tudo","Tudo"]];
 
@@ -921,23 +1060,32 @@ function Dashboard({ pedidos, fila, produtos, insumos, itensBaixos, go, maquinas
   // Métricas de produção (a partir das vendas despachadas)
   let lucroTotal = 0, horasMes = 0;
   const rankMap = {};
+  const canaisDash = (config && config.canais && config.canais.length) ? config.canais : CANAIS;
   vendas.forEach((pedido) => {
+    const cn = canaisDash.find((c) => c.nome === pedido.canal) || { comissao: 0, pgto: 0, tarifa: 0, ads: 0, seg: 0 };
+    const pg = pedido.pagamento && pedido.pagamento.forma ? pedido.pagamento : null;
+    const txPgto = taxaPgtoPedido(pg, cn, (config && config.cartao) || {});
     (pedido.itens || []).forEach((item) => {
       const prod = produtos.find((p) => p.sku === item.sku);
-      const margem = prod ? (prod.margem || 0) / 100 : 0;
       const horas = prod ? (prod.horasImpressao || 0) : 0;
       const qtd = item.qtd || 1;
       const rev = (item.preco || 0) * qtd;
-      const lucro = rev * margem;
+      // lucro real: receita − custo da peça − taxas do canal/forma de pagamento do pedido (mesma lógica da DRE)
+      const custoItem = (prod ? (prod.custo || 0) : 0) * qtd;
+      const adsPct = prod && prod.usarAds === false ? 0 : (cn.ads || 0);
+      const segPct = prod && prod.usarSeg === false ? 0 : (cn.seg || 0);
+      const taxaPct = (pg ? 0 : (cn.comissao || 0)) + txPgto + adsPct + segPct + (prod && prod.impostoTaxa != null ? prod.impostoTaxa : 0.06);
+      const lucro = rev - custoItem - rev * taxaPct - (pg ? 0 : (cn.tarifa || 0)) * qtd;
       lucroTotal += lucro;
       horasMes += horas * qtd;
       // ranking
       const k = item.sku || item.produto;
-      if (!rankMap[k]) rankMap[k] = { sku: k, nome: item.produto || (prod ? prod.nome : k), qtd: 0, receita: 0, lucro: 0, margem: prod ? prod.margem : 0, horas: 0 };
+      if (!rankMap[k]) rankMap[k] = { sku: k, nome: item.produto || (prod ? prod.nome : k), qtd: 0, receita: 0, lucro: 0, margem: 0, horas: 0 };
       rankMap[k].qtd += qtd;
       rankMap[k].receita += rev;
       rankMap[k].lucro += lucro;
       rankMap[k].horas += horas * qtd;
+      rankMap[k].margem = rankMap[k].receita > 0 ? round2((rankMap[k].lucro / rankMap[k].receita) * 100) : 0;
     });
   });
   const ranking = Object.values(rankMap).sort((a, b) => b.receita - a.receita);
@@ -1158,7 +1306,7 @@ function Esteira({ fila }) {
 }
 
 // ---------- 1 · PRECIFICAR (wizard de 6 etapas) ----------
-function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatalogo, gerarOrcamento, go }) {
+function Calculadora({ input, set, setInput, r, insumos, maquinas, config, salvarNoCatalogo, gerarOrcamento, go }) {
   const [etapa, setEtapa] = React.useState(0);
   const statusColor = r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad;
   const passos = ["Identificação", "Material", "Operacional", "Mão de obra", "Acessórios", "Despacho", "Resumo"];
@@ -1276,6 +1424,12 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
               opcoes={[["tempo", "Por tempo de trabalho"], ["manual", "Valor manual"], ["nao", "Não considerar"]]} />
             {input.moMode === "tempo" && (<>
               <F label="Custo da hora de trabalho (R$/h)" value={input.moHora} step={1} onChange={(v) => set("moHora", v)} suffix="R$" />
+              {config && Math.abs((input.moHora || 0) - custoHoraEfetivo(config)) > 0.005 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: -6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: C.sub }}>Configurações: <b style={{ color: C.accent2 }}>{brl(custoHoraEfetivo(config))}/h</b>{config.moModo === "salario" ? " (derivado do salário)" : ""}</span>
+                  <button onClick={() => set("moHora", round2(custoHoraEfetivo(config)))} style={{ background: C.panel2, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Aplicar</button>
+                </div>
+              )}
               <Row><F label="Setup (min)" value={input.setup} onChange={(v) => set("setup", v)} /><F label="Retirada (min)" value={input.retirada} onChange={(v) => set("retirada", v)} /></Row>
               <Row><F label="Acabamento (min)" value={input.acabamento} onChange={(v) => set("acabamento", v)} /><F label="Embalar (min)" value={input.embalagemMin} onChange={(v) => set("embalagemMin", v)} /></Row>
             </>)}
@@ -1340,7 +1494,7 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
             <div style={{ marginTop: 18 }}><Label>Meta de lucro líquido</Label></div>
             <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
               {["rs","pct"].map((m) => (
-                <button key={m} onClick={() => { set("lucroAlvoModo", m); set("lucroAlvoValor", m === "rs" ? 15 : 0.20); }}
+                <button key={m} onClick={() => { set("lucroAlvoModo", m); set("lucroAlvoValor", m === "rs" ? (config && config.lucroAlvoRS != null ? config.lucroAlvoRS : 15) : 0.20); }}
                   style={{ flex: 1, background: input.lucroAlvoModo === m ? C.accent : C.panel2, color: input.lucroAlvoModo === m ? "#1a1207" : C.sub,
                     border: `1px solid ${input.lucroAlvoModo === m ? C.accent : C.line}`, borderRadius: 8, padding: "7px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
                   {m === "rs" ? "R$ fixo por peça" : "% de margem"}
@@ -1404,7 +1558,7 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, salvarNoCatal
 
             <div style={{ marginTop: 12 }}>
               <button onClick={() => {
-                if (!input.showCanaisConfig && !input.canaisCustom) set("canaisCustom", JSON.parse(JSON.stringify(CANAIS)));
+                if (!input.showCanaisConfig && !input.canaisCustom) set("canaisCustom", JSON.parse(JSON.stringify((config && config.canais && config.canais.length) ? config.canais : CANAIS)));
                 set("showCanaisConfig", !input.showCanaisConfig);
               }} style={{ background: "transparent", border: `1px solid ${C.line}`, color: C.sub, padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                 ⚙ {input.showCanaisConfig ? "Ocultar" : "Personalizar taxas dos canais"}
@@ -1679,9 +1833,9 @@ function Distribuicao({ r }) {
 }
 
 // ---------- MÁQUINAS (cadastro) ----------
-function Maquinas({ maquinas, setMaquinas }) {
+function Maquinas({ maquinas, setMaquinas, config }) {
   const upd = (id, patch) => setMaquinas((arr) => arr.map((m) => m.id === id ? { ...m, ...patch } : m));
-  const add = () => setMaquinas((arr) => [...arr, { id: "MAQ-" + (arr.length + 1) + "-" + Date.now().toString().slice(-4), nome: "Nova máquina", tipo: "FDM", potenciaKw: 0.1, valor: 1500, vidaUtilH: 4000, manutHora: 0.15, tarifaEnergia: 0.9, horasDia: 16, diasMes: 22, eficiencia: 0.85 }]);
+  const add = () => setMaquinas((arr) => [...arr, { id: "MAQ-" + (arr.length + 1) + "-" + Date.now().toString().slice(-4), nome: "Nova máquina", tipo: "FDM", potenciaKw: 0.1, valor: 1500, vidaUtilH: 4000, manutHora: 0.15, tarifaEnergia: (config && config.tarifaEnergia != null ? config.tarifaEnergia : 0.9), horasDia: 16, diasMes: 22, eficiencia: 0.85 }]);
   const del = (id) => setMaquinas((arr) => arr.filter((m) => m.id !== id));
   // resumo da frota
   const custoHoraMedio = avg(maquinas.map((m) => custoHoraMaquina(m)));
@@ -2266,11 +2420,11 @@ function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos, se
 }
 
 // ---------- 2 · CATÁLOGO ----------
-function Catalogo({ produtos, setProdutos, criarPedido, setInput, go, insumos }) {
+function Catalogo({ produtos, setProdutos, criarPedido, setInput, go, insumos, config }) {
   const [editando, setEditando] = React.useState(null);
   const addEstoque = (sku, d) => setProdutos((p) => p.map((x) => x.sku === sku ? { ...x, estoquePronto: Math.max(0, x.estoquePronto + d) } : x));
   const remover = (sku) => { if (confirm("Remover este produto do catálogo?")) setProdutos((p) => p.filter((x) => x.sku !== sku)); };
-  const salvarEdicao = (prod) => { setProdutos((p) => p.map((x) => x.sku === prod.sku ? prod : x)); setEditando(null); };
+  const salvarEdicao = (prod) => { const recalc = recalcProduto(prod, config); setProdutos((p) => p.map((x) => x.sku === recalc.sku ? recalc : x)); setEditando(null); };
   return (
     <div>
       <H title="2 · Catálogo de produtos" sub="Produtos precificados — edite preço, canal, cores e re-simule cenários" />
@@ -2310,15 +2464,19 @@ function Catalogo({ produtos, setProdutos, criarPedido, setInput, go, insumos })
           <div style={{ fontSize: 12, color: C.sub, marginTop: 12 }}>Dica: estoque pronto = peças já impressas. Pedido com estoque vai direto para Embalar; sem estoque, entra em Produção.</div>
         </Card>
       )}
-      {editando && <EditarProduto prod={editando} setProd={setEditando} onSalvar={salvarEdicao} onRemover={() => { remover(editando.sku); setEditando(null); }} close={() => setEditando(null)} insumos={insumos} />}
+      {editando && <EditarProduto prod={editando} setProd={setEditando} onSalvar={salvarEdicao} onRemover={() => { remover(editando.sku); setEditando(null); }} close={() => setEditando(null)} insumos={insumos} config={config} />}
     </div>
   );
 }
 
 // Modal de edição de produto com re-simulação por canal + cores
-function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos }) {
+function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, config }) {
   const set = (k, v) => setProd((s) => ({ ...s, [k]: v }));
-  const cenarios = CANAIS.map((c) => precoDoCanal(prod.custo || 0, c, prod.impostoTaxa != null ? prod.impostoTaxa : 0.06, prod.usarAds !== false, prod.usarSeg !== false));
+  const canaisEdit = (config && config.canais && config.canais.length) ? config.canais : CANAIS;
+  const lvModo = prod.lucroAlvoModo || "rs";
+  const lvVal = prod.lucroAlvoValor != null ? prod.lucroAlvoValor : (config && config.lucroAlvoRS != null ? config.lucroAlvoRS : CFG.lucroAlvoRS);
+  const mkEdit = config && config.markupPremium != null ? config.markupPremium : CFG.markupPremium;
+  const cenarios = canaisEdit.map((c) => precoDoCanal(prod.custo || 0, c, prod.impostoTaxa != null ? prod.impostoTaxa : 0.06, prod.usarAds !== false, prod.usarSeg !== false, lvModo === "rs" ? lvVal : 0, lvModo === "pct" ? lvVal : 0, lvModo, mkEdit));
   const ref = cenarios.find((x) => x.nome === prod.canal) || cenarios[0];
   const preco = prod.precoPraticado || ref.precoSaudavel;
   const lucro = preco - ref.baseMaisTarifa - preco * ref.totalPct;
@@ -2408,16 +2566,17 @@ function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos }) {
 }
 
 // ---------- 3 · ORÇAMENTOS ----------
-function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond }) {
+function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond, config }) {
   const [edit, setEdit] = React.useState(null);
   const [verCond, setVerCond] = React.useState(false);
+  const [aprovando, setAprovando] = React.useState(null);
   const novo = () => {
     const o = { id: "ORC-" + (1000 + orcamentos.length + 1), cliente: "", contato: "", itens: [], total: 0, status: "Rascunho", data: hoje(),
       sinal: cond.sinal, prazoProducao: cond.prazoProducao, prazoEntrega: cond.prazoEntrega, validade: cond.validade, pagamento: cond.pagamento };
     setOrcamentos((arr) => [o, ...arr]); setEdit(o);
   };
   const salvar = (o) => {
-    const total = o.itens.reduce((a, it) => a + it.preco * it.qtd, 0);
+    const total = calcTotalOrc(o).total;
     setOrcamentos((arr) => arr.map((x) => x.id === o.id ? { ...o, total } : x)); setEdit(null);
   };
   const excluir = (id) => { if (confirm("Excluir orçamento?")) { setOrcamentos((arr) => arr.filter((x) => x.id !== id)); setEdit(null); } };
@@ -2439,16 +2598,76 @@ function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCon
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <Tag t={o.status} />
+              {o.status === "Aprovado" && o.formaPagamento && <span style={{ fontSize: 11, fontWeight: 700, color: C.accent2, background: `${C.accent2}22`, padding: "3px 9px", borderRadius: 8 }}>{FORMAS_PGTO[o.formaPagamento] || o.formaPagamento}{o.formaPagamento === "credito" && (o.parcelasPgto || 1) > 1 ? ` ${o.parcelasPgto}×` : ""}</span>}
               <Btn small ghost onClick={() => setEdit({ ...o, itens: o.itens.map((i) => ({ ...i })) })}>Editar</Btn>
               <Btn small ghost onClick={() => enviarWhats(o, cond)}>WhatsApp</Btn>
               <Btn small ghost onClick={() => exportarPDF(o, cond)}>PDF</Btn>
-              {o.status !== "Aprovado" && <Btn small onClick={() => aprovar(o)}>Aprovar → Pedido</Btn>}
+              {o.status !== "Aprovado" && <Btn small onClick={() => setAprovando(o)}>Aprovar → Pedido</Btn>}
             </div>
           </div>
         </Card>
       ))}
       {edit && <EditarOrcamento orc={edit} setOrc={setEdit} produtos={produtos} onSalvar={salvar} onExcluir={() => excluir(edit.id)} close={() => setEdit(null)} />}
       {verCond && <CondicoesModal cond={cond} setCond={setCond} close={() => setVerCond(false)} />}
+      {aprovando && <ModalAprovarOrcamento orc={aprovando} config={config} close={() => setAprovando(null)}
+        onConfirm={(pgto) => { aprovar(aprovando, pgto); setAprovando(null); }} />}
+    </div>
+  );
+}
+
+// Modal de aprovação do orçamento: canal + forma de pagamento + parcelas + status da cobrança
+function ModalAprovarOrcamento({ orc, config, onConfirm, close }) {
+  const canais = (config && config.canais && config.canais.length) ? config.canais : CANAIS;
+  const cart = (config && config.cartao) || {};
+  const [canal, setCanal] = React.useState("Venda direta");
+  const [forma, setForma] = React.useState("pix");
+  const [parcelas, setParcelas] = React.useState(1);
+  const [pago, setPago] = React.useState(true);
+  const vendaDireta = canal === "Venda direta";
+  const tOrc = calcTotalOrc(orc);
+  const total = tOrc.total;
+
+  const taxa = vendaDireta ? taxaPgtoPedido({ forma, parcelas }, null, cart) : 0;
+  const liquido = total * (1 - taxa);
+  const previsao = !vendaDireta ? `repasse do canal em ~${(canais.find((c) => c.nome === canal) || {}).repasseDias || 0} dias após o despacho`
+    : forma === "credito" ? ((parcelas > 1 && cart.porParcela !== false) ? `${parcelas} parcelas mensais de ${brl(liquido / parcelas)}` : `repasse em ~${cart.repasseDias != null ? cart.repasseDias : 30} dias`)
+    : forma === "debito" ? "repasse em ~1 dia útil"
+    : "imediato";
+
+  const confirmar = () => onConfirm({ canal, forma: vendaDireta ? forma : "", parcelas: forma === "credito" ? parcelas : 1, pago: vendaDireta ? pago : false });
+
+  return (
+    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, padding: 26, maxWidth: 460, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 17, marginBottom: 4 }}>Aprovar orçamento {orc.id}</div>
+        <div style={{ fontSize: 13, color: C.sub, marginBottom: 14 }}>{orc.cliente || "Cliente"} · {brl(total)}{tOrc.desconto > 0 ? ` (com desconto de ${brl(tOrc.desconto)})` : ""} — o orçamento vira um pedido na fila de produção.</div>
+
+        <Sel label="Canal da venda" value={canal} onChange={setCanal} options={canais.map((c) => c.nome)} />
+
+        {vendaDireta && (<>
+          <div style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>Forma de pagamento</div>
+          <Fonte value={forma} onChange={(v) => { setForma(v); setPago(v === "pix" || v === "dinheiro"); }}
+            opcoes={[["pix", "Pix"], ["dinheiro", "Dinheiro"], ["debito", "Débito"], ["credito", "Crédito"]]} />
+          {forma === "credito" && (
+            <Sel label="Parcelas" value={`${parcelas}×`} onChange={(v) => setParcelas(parseInt(v))} options={[1,2,3,4,5,6,7,8,9,10,11,12].map((n) => `${n}×`)} />
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0 12px", cursor: "pointer" }}>
+            <input type="checkbox" checked={pago} onChange={(e) => setPago(e.target.checked)} style={{ accentColor: C.accent, width: 16, height: 16 }} />
+            <span style={{ fontSize: 13 }}>Cobrança já realizada {forma === "credito" || forma === "debito" ? "(cartão passado)" : "(valor recebido)"}</span>
+          </label>
+          <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Taxa da forma de pagamento</span><b style={{ color: C.ink }}>{pct(taxa)}</b></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 4 }}><span style={{ color: C.sub }}>Líquido a receber</span><b style={{ fontFamily: "Sora", color: C.accent2 }}>{brl(liquido)}</b></div>
+            <div style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>Recebimento: {previsao}</div>
+          </div>
+        </>)}
+        {!vendaDireta && <Hint>Venda por marketplace: comissões, tarifas e prazo de repasse seguem o cadastro do canal nas Configurações. O recebível aparece no Financeiro após o despacho.</Hint>}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <Btn full onClick={confirmar}>✓ Aprovar e criar pedido</Btn>
+          <Btn ghost onClick={close}>Cancelar</Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2459,7 +2678,8 @@ function EditarOrcamento({ orc, setOrc, produtos, onSalvar, onExcluir, close }) 
   const updItem = (i, patch) => setOrc((s) => ({ ...s, itens: s.itens.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
   const delItem = (i) => setOrc((s) => ({ ...s, itens: s.itens.filter((_, idx) => idx !== i) }));
   const pickProduto = (i, sku) => { const p = produtos.find((x) => x.sku === sku); updItem(i, { sku, nome: p ? p.nome : "", preco: p ? (p.precoPraticado || p.precoSaudavel) : 0, cor: "" }); };
-  const total = orc.itens.reduce((a, it) => a + it.preco * it.qtd, 0);
+  const t = calcTotalOrc(orc);
+  const total = t.total;
   return (
     <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20, overflowY: "auto" }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.line}`, borderRadius: 18, padding: 24, maxWidth: 660, width: "100%", margin: "auto" }}>
@@ -2491,7 +2711,27 @@ function EditarOrcamento({ orc, setOrc, produtos, onSalvar, onExcluir, close }) 
         })}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <Btn small ghost onClick={addItem}>＋ Adicionar item</Btn>
-          <span style={{ fontWeight: 700 }}>Total: <span style={{ color: C.accent }}>{brl(total)}</span></span>
+          <span style={{ fontSize: 13, color: C.sub }}>Subtotal: <b style={{ color: C.ink }}>{brl(t.subtotal)}</b></span>
+        </div>
+
+        <div style={{ marginTop: 14 }}><Label>Desconto</Label></div>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[["rs", "R$"], ["pct", "%"]].map(([m, lbl]) => (
+              <button key={m} onClick={() => { set("descontoModo", m); set("descontoValor", 0); }}
+                style={{ background: (orc.descontoModo || "rs") === m ? C.accent : C.panel2, color: (orc.descontoModo || "rs") === m ? "#1a1207" : C.sub,
+                  border: `1px solid ${(orc.descontoModo || "rs") === m ? C.accent : C.line}`, borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>{lbl}</button>
+            ))}
+          </div>
+          <div style={{ width: 140 }}>
+            {(orc.descontoModo || "rs") === "pct"
+              ? <F label="Desconto (%)" value={round2((orc.descontoValor || 0) * 100)} step={1} onChange={(v) => set("descontoValor", Math.max(0, Math.min(100, v || 0)) / 100)} suffix="%" />
+              : <F label="Desconto (R$)" value={orc.descontoValor || 0} step={1} onChange={(v) => set("descontoValor", Math.max(0, v || 0))} suffix="R$" />}
+          </div>
+          {t.desconto > 0 && <span style={{ fontSize: 12, color: C.warn, marginBottom: 16 }}>− {brl(t.desconto)} ({pct(t.subtotal > 0 ? t.desconto / t.subtotal : 0)} do subtotal)</span>}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>Total: <span style={{ color: C.accent, fontFamily: "Sora", fontSize: 18 }}>{brl(total)}</span></span>
         </div>
         <div style={{ marginTop: 16 }}><Label>Condições comerciais</Label></div>
         <div className="grid-item" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -2539,7 +2779,7 @@ function CondicoesModal({ cond, setCond, close }) {
 }
 
 // ---------- 4 · PEDIDOS (esteira) ----------
-function Pedidos({ pedidos, fila, avancar, produtos, criarPedido }) {
+function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config }) {
   const [cliente, setCliente] = React.useState("");
   const [canal, setCanal] = React.useState("Mercado Livre");
   const [itens, setItens] = React.useState([]);
@@ -2567,7 +2807,7 @@ function Pedidos({ pedidos, fila, avancar, produtos, criarPedido }) {
         <Label>Novo pedido (vários produtos)</Label>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <div style={{ flex: 1, minWidth: 150 }}><F label="Cliente" text value={cliente} onChange={setCliente} /></div>
-          <div style={{ flex: 1, minWidth: 150 }}><Sel label="Canal / origem" value={canal} onChange={setCanal} options={CANAIS.map((c) => c.nome)} /></div>
+          <div style={{ flex: 1, minWidth: 150 }}><Sel label="Canal / origem" value={canal} onChange={setCanal} options={((config && config.canais && config.canais.length) ? config.canais : CANAIS).map((c) => c.nome)} /></div>
         </div>
         {itens.map((it, i) => {
           const prod = produtos.find((x) => x.sku === it.sku);
@@ -3005,8 +3245,9 @@ function Insumos({ insumos, setInsumos }) {
 
 // ---------- ROAS ----------
 // ---- Calculo a partir de produto do catálogo ----
-function calcFromCatalogo(produto, canalNome, precoCustom) {
-  const canal = CANAIS.find((c) => c.nome === canalNome) || CANAIS[0];
+function calcFromCatalogo(produto, canalNome, precoCustom, config) {
+  const canaisFc = (config && config.canais && config.canais.length) ? config.canais : CANAIS;
+  const canal = canaisFc.find((c) => c.nome === canalNome) || canaisFc[0];
   const taxaImposto = produto.impostoTaxa || 0;
   const usarAds = produto.usarAds !== false;
   const usarSeg = produto.usarSeg !== false;
@@ -3031,7 +3272,8 @@ function calcFromCatalogo(produto, canalNome, precoCustom) {
   return { canal, totalPct, baseMaisTarifa, precoMinimo, precoSaudavel, precoPraticado, lucro, margem, lucroHora, margemAntesAds, acosMax, roasMeta, investMaxVenda, status, statusColor, usarAds, usarSeg, taxaImposto, produto };
 }
 
-function SeletorProduto({ produtos, sku, setSku, canalNome, setCanalNome, preco, setPreco, label }) {
+function SeletorProduto({ produtos, sku, setSku, canalNome, setCanalNome, preco, setPreco, label, canais }) {
+  const canaisSel = (canais && canais.length) ? canais : CANAIS;
   const prod = produtos.find((p) => p.sku === sku);
   const estiloSel = { background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit", width: "100%" };
   return (
@@ -3052,7 +3294,7 @@ function SeletorProduto({ produtos, sku, setSku, canalNome, setCanalNome, preco,
         <label>
           <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Canal de vendas</div>
           <select value={canalNome} onChange={(e) => setCanalNome(e.target.value)} style={estiloSel}>
-            {CANAIS.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
+            {canaisSel.map((c) => <option key={c.nome} value={c.nome}>{c.nome}</option>)}
           </select>
         </label>
         <label>
@@ -3096,19 +3338,19 @@ function PainelLucro({ calc, horasImpressao, moHora }) {
   );
 }
 
-function Roas({ r, produtos }) {
+function Roas({ r, produtos, config }) {
   const [sku, setSku] = React.useState("");
   const [canalNome, setCanalNome] = React.useState(r.canalRef || "Mercado Livre");
   const [preco, setPreco] = React.useState(r.precoPraticado || 0);
 
   const prod = produtos.find((p) => p.sku === sku);
-  const calc = prod ? calcFromCatalogo(prod, canalNome, preco) : { ...r, lucro: r.lucroPraticado, margem: r.margemAtual, lucroHora: r.horasImpressao > 0 ? r.lucroPraticado / r.horasImpressao : null, status: r.status, statusColor: r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad, produto: null };
+  const calc = prod ? calcFromCatalogo(prod, canalNome, preco, config) : { ...r, lucro: r.lucroPraticado, margem: r.margemAtual, lucroHora: r.horasImpressao > 0 ? r.lucroPraticado / r.horasImpressao : null, status: r.status, statusColor: r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad, produto: null };
 
   return (
     <div>
       <H title="ROAS & Anúncios" sub="Quanto investir em mídia mantendo margem — por produto e canal" />
-      <SeletorProduto produtos={produtos} sku={sku} setSku={setSku} canalNome={canalNome} setCanalNome={setCanalNome} preco={preco} setPreco={setPreco} label="Produto para análise" />
-      <PainelLucro calc={calc} horasImpressao={prod ? prod.horasImpressao : 0} moHora={25} />
+      <SeletorProduto produtos={produtos} sku={sku} setSku={setSku} canalNome={canalNome} setCanalNome={setCanalNome} preco={preco} setPreco={setPreco} label="Produto para análise" canais={(config && config.canais && config.canais.length) ? config.canais : CANAIS} />
+      <PainelLucro calc={calc} horasImpressao={prod ? prod.horasImpressao : 0} moHora={round2(custoHoraEfetivo(config))} />
       <Card style={{ maxWidth: 680 }}>
         <Label>Análise de anúncios — {canalNome}</Label>
         <BigStat label="Preço praticado" value={brl(calc.precoPraticado)} />
@@ -3129,66 +3371,253 @@ function Roas({ r, produtos }) {
 }
 
 // ---------- KITS ----------
-function Kits({ input, set, r, kit, produtos }) {
-  const [sku, setSku] = React.useState("");
-  const [canalNome, setCanalNome] = React.useState(r.canalRef || "Mercado Livre");
-  const [preco, setPreco] = React.useState(r.precoPraticado || 0);
-  const [kitQtd, setKitQtd] = React.useState(input.kitQtd || 3);
-  const [kitDesconto, setKitDesconto] = React.useState(input.kitDesconto || 0.08);
-  const [kitEmbExtra, setKitEmbExtra] = React.useState(input.kitEmbExtra || 1.75);
-  const [kitBrindeExtra, setKitBrindeExtra] = React.useState(input.kitBrindeExtra || 1);
+function Kits({ produtos, config }) {
+  const [sub, setSub] = React.useState("combo");
+  const canais = (config && config.canais && config.canais.length) ? config.canais : CANAIS;
+  const cHora = round2(custoHoraEfetivo(config));
+  const impostoPadrao = config && config.impostoTaxa != null ? config.impostoTaxa : 0.06;
+  const precoTab = (p) => p ? (p.precoPraticado || p.precoSaudavel || 0) : 0;
 
-  const prod = produtos.find((p) => p.sku === sku);
-  const calc = prod
-    ? calcFromCatalogo(prod, canalNome, preco)
-    : { precoPraticado: r.precoPraticado, lucro: r.lucroPraticado, margem: r.margemAtual, totalPct: r.totalPct, baseMaisTarifa: r.baseMaisTarifa, canal: r.canal, status: r.status, statusColor: r.status === "Saudável" ? C.good : r.status === "Apertado" ? C.warn : C.bad, produto: null, lucroHora: null };
+  // ================= KIT / COMBO =================
+  const [itensKit, setItensKit] = React.useState([]);
+  const [canalKit, setCanalKit] = React.useState((canais.find((c) => c.nome === "Mercado Livre") || canais[0]).nome);
+  const [precoKitIn, setPrecoKitIn] = React.useState(0);
+  const [embExtra, setEmbExtra] = React.useState(2);
+  const [brindeExtra, setBrindeExtra] = React.useState(0);
+  const addItemKit = () => { const p = produtos[0]; if (!p) return; setItensKit((arr) => [...arr, { sku: p.sku, qtd: 1 }]); };
+  const updItemKit = (i, patch) => setItensKit((arr) => arr.map((x, k) => k === i ? { ...x, ...patch } : x));
+  const delItemKit = (i) => setItensKit((arr) => arr.filter((_, k) => k !== i));
 
-  const precoKit = calc.precoPraticado * kitQtd * (1 - kitDesconto);
-  const custoProdKit = calc.baseMaisTarifa * kitQtd;
-  const custoLogKit = kitEmbExtra + kitBrindeExtra;
-  const lucroUnit = calc.lucro;
-  const lucroKit = precoKit - custoProdKit - custoLogKit - ((calc.canal ? calc.canal.tarifa + calc.canal.frete : 0)) - precoKit * calc.totalPct;
-  const lucroKitUnit = lucroKit / kitQtd;
-  const margemUnit = calc.precoPraticado > 0 ? lucroUnit / calc.precoPraticado : 0;
+  const cKit = canais.find((c) => c.nome === canalKit) || canais[0];
+  let subtotalTab = 0, custoProducaoItens = 0, economiaLog = 0, horasKit = 0, lucroSeparado = 0, semDetalhe = 0;
+  const detKit = { material: 0, maquina: 0, mo: 0, acessorios: 0 };
+  itensKit.forEach(({ sku, qtd }) => {
+    const p = produtos.find((x) => x.sku === sku); if (!p) return;
+    const q = qtd || 1; const pt = precoTab(p);
+    const cp = custosProduto(p);
+    const imposto = p.impostoTaxa != null ? p.impostoTaxa : impostoPadrao;
+    const pctItem = (cKit.comissao || 0) + (cKit.pgto || 0) + (p.usarAds === false ? 0 : (cKit.ads || 0)) + (p.usarSeg === false ? 0 : (cKit.seg || 0)) + imposto;
+    subtotalTab += pt * q; horasKit += (p.horasImpressao || 0) * q;
+    custoProducaoItens += cp.producao * q;
+    economiaLog += cp.logistico * q; // embalagens individuais que o kit dispensa
+    if (cp.det) { detKit.material += cp.det.material * q; detKit.maquina += cp.det.maquina * q; detKit.mo += cp.det.mo * q; detKit.acessorios += cp.det.acessorios * q; }
+    else semDetalhe += q;
+    // venda separada: cada unidade é uma venda completa (com sua embalagem individual e tarifa)
+    lucroSeparado += pt * q - ((p.custo || 0)) * q - pt * q * pctItem - (cKit.tarifa || 0) * q;
+  });
+  const pctKit = (cKit.comissao || 0) + (cKit.pgto || 0) + (cKit.ads || 0) + (cKit.seg || 0) + impostoPadrao;
+  const custoKit = custoProducaoItens + (embExtra || 0) + (brindeExtra || 0);
+  const precoKit = precoKitIn > 0 ? precoKitIn : round2(subtotalTab);
+  const descKit = subtotalTab > 0 ? Math.max(0, 1 - precoKit / subtotalTab) : 0;
+  const lucroKit = precoKit - custoKit - (cKit.tarifa || 0) - precoKit * pctKit;
   const margemKit = precoKit > 0 ? lucroKit / precoKit : 0;
-  const horas = prod ? prod.horasImpressao : (input.horasImpressao || 0);
-  const lucroHoraUnit = horas > 0 ? lucroUnit / horas : null;
-  const lucroHoraKit = horas > 0 ? lucroKitUnit / horas : null;
+  const precoMinKit = pctKit < 1 ? (custoKit + (cKit.tarifa || 0)) / (1 - pctKit) : 0;
+  const lucroHoraKit = horasKit > 0 ? lucroKit / horasKit : null;
+  const statusKit = precoKit < precoMinKit ? ["Inviável", C.bad] : (lucroHoraKit != null && lucroHoraKit < cHora) ? ["Apertado", C.warn] : ["Saudável", C.good];
+  const qtdTotKit = itensKit.reduce((a, i) => a + (i.qtd || 1), 0);
+
+  // ================= ATACADO =================
+  const [ataSku, setAtaSku] = React.useState("");
+  const [canalAta, setCanalAta] = React.useState("Venda direta");
+  const [embLote, setEmbLote] = React.useState(15);
+  const [embUnAta, setEmbUnAta] = React.useState(0.5);
+  const [faixas, setFaixas] = React.useState([{ qtd: 10, desc: 0.05 }, { qtd: 25, desc: 0.10 }, { qtd: 50, desc: 0.15 }, { qtd: 100, desc: 0.20 }]);
+  const updFaixa = (i, patch) => setFaixas((arr) => arr.map((x, k) => k === i ? { ...x, ...patch } : x));
+  const addFaixa = () => setFaixas((arr) => [...arr, { qtd: 200, desc: 0.25 }]);
+  const delFaixa = (i) => setFaixas((arr) => arr.filter((_, k) => k !== i));
+
+  const pAta = produtos.find((x) => x.sku === ataSku);
+  const cAta = canais.find((c) => c.nome === canalAta) || canais[0];
+  const ptAta = precoTab(pAta);
+  const cpAta = custosProduto(pAta);
+  const impAta = pAta && pAta.impostoTaxa != null ? pAta.impostoTaxa : impostoPadrao;
+  const pctAta = (cAta.comissao || 0) + (cAta.pgto || 0) + (pAta && pAta.usarAds === false ? 0 : (cAta.ads || 0)) + (pAta && pAta.usarSeg === false ? 0 : (cAta.seg || 0)) + impAta;
+  // mínimo no varejo (custo cheio, com embalagem individual) — referência de tabela
+  const precoMinVarejo = pAta && pctAta < 1 ? ((pAta.custo || 0) + (cAta.tarifa || 0)) / (1 - pctAta) : 0;
+  const descMaxVarejo = ptAta > 0 ? Math.max(0, 1 - precoMinVarejo / ptAta) : 0;
+
+  const linhasAta = pAta ? faixas.map((f) => {
+    const qtd = Math.max(1, Math.round(f.qtd || 1));
+    const precoUn = ptAta * (1 - (f.desc || 0));
+    const receita = precoUn * qtd;
+    // custo do lote: produção × qtd + embalagem unitária do lote × qtd + embalagem do lote (diluída)
+    const custoTot = cpAta.producao * qtd + (embUnAta || 0) * qtd + (embLote || 0);
+    const custoVarejoTot = (pAta.custo || 0) * qtd; // como seria com embalagem individual de varejo
+    const economiaLogF = Math.max(0, custoVarejoTot - custoTot);
+    const lucroTot = receita - custoTot - receita * pctAta - (cAta.tarifa || 0) * qtd;
+    const horasTot = (pAta.horasImpressao || 0) * qtd;
+    const lucroHora = horasTot > 0 ? lucroTot / horasTot : null;
+    // mínimo unitário desta faixa (lote dilui a embalagem fixa → mínimo cai com o volume)
+    const custoUnFaixa = cpAta.producao + (embUnAta || 0) + (embLote || 0) / qtd;
+    const minFaixa = pctAta < 1 ? (custoUnFaixa + (cAta.tarifa || 0)) / (1 - pctAta) : 0;
+    const status = precoUn < minFaixa ? ["Inviável", C.bad] : (lucroHora != null && lucroHora < cHora) ? ["Atenção", C.warn] : ["Saudável", C.good];
+    return { qtd, desc: f.desc || 0, precoUn, receita, custoTot, economiaLogF, lucroTot, lucroUn: lucroTot / qtd, margem: receita > 0 ? lucroTot / receita : 0, horasTot, lucroHora, minFaixa, status };
+  }) : [];
+
+  const thA = { padding: "8px 6px", fontSize: 11, color: C.sub, textAlign: "left", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" };
+  const tdA = { padding: "8px 6px", fontSize: 13, whiteSpace: "nowrap" };
 
   return (
     <div>
-      <H title="Kitficação" sub="Compare unitário vs kit — por produto, canal e preço" />
-      <SeletorProduto produtos={produtos} sku={sku} setSku={setSku} canalNome={canalNome} setCanalNome={setCanalNome} preco={preco} setPreco={setPreco} label="Produto base do kit" />
-      <PainelLucro calc={calc} horasImpressao={horas} moHora={25} />
-      <Card style={{ marginBottom: 16 }}>
-        <Label>Configuração do kit</Label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-          {[["Unidades no kit", kitQtd, setKitQtd], ["Desconto (ex: 0,08)", kitDesconto, setKitDesconto], ["Embalagem extra (R$)", kitEmbExtra, setKitEmbExtra], ["Brinde extra (R$)", kitBrindeExtra, setKitBrindeExtra]].map(([lbl, val, fn]) => (
-            <label key={lbl}>
-              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>{lbl}</div>
-              <PrecoLivreInput value={val} onChange={fn} fontSize={14} fontWeight={600} />
-            </label>
-          ))}
+      <H title="Kitficação & Atacado" sub="Combos para aumentar o ticket · faixas de volume sem destruir a margem" />
+      <Fonte value={sub} onChange={setSub} opcoes={[["combo", "▣ Kit / Combo"], ["atacado", "⬚ Atacado"]]} />
+
+      {/* ================= COMBO ================= */}
+      {sub === "combo" && (<>
+        {!produtos.length && <Card><Empty txt="Cadastre produtos no Catálogo para montar kits." /></Card>}
+        {produtos.length > 0 && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <Card title="Montagem do kit" style={{ flex: 1.3, minWidth: 330 }}>
+            {itensKit.map((it, i) => {
+              const p = produtos.find((x) => x.sku === it.sku);
+              return (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "1.8fr 0.6fr auto auto", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                  <select value={it.sku} onChange={(e) => updItemKit(i, { sku: e.target.value })} style={{ background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit", minWidth: 0 }}>
+                    {produtos.map((pp) => <option key={pp.sku} value={pp.sku}>{pp.nome}</option>)}
+                  </select>
+                  <NumCellCfg value={it.qtd} onChange={(v) => updItemKit(i, { qtd: Math.max(1, Math.round(v)) })} />
+                  <span style={{ fontSize: 12, color: C.sub }}>{brl(precoTab(p) * (it.qtd || 1))}</span>
+                  <MiniBtn onClick={() => delItemKit(i)}>✕</MiniBtn>
+                </div>
+              );
+            })}
+            <Btn small ghost onClick={addItemKit}>＋ Adicionar produto</Btn>
+            <Hint>Repita o mesmo produto para kit de unidades iguais, ou combine produtos diferentes para um combo de valor agregado.</Hint>
+            <div style={{ marginTop: 12 }}>
+              <Sel label="Canal de venda do kit" value={canalKit} onChange={setCanalKit} options={canais.map((c) => c.nome)} />
+              <Row>
+                <F label="Embalagem extra (R$)" value={embExtra} step={0.5} onChange={setEmbExtra} suffix="R$" />
+                <F label="Brinde extra (R$)" value={brindeExtra} step={0.5} onChange={setBrindeExtra} suffix="R$" />
+              </Row>
+              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Preço do kit (R$)</div>
+              <PrecoLivreInput value={precoKitIn || round2(subtotalTab)} onChange={setPrecoKitIn} />
+              <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                {[0.05, 0.08, 0.12].map((d) => (
+                  <button key={d} onClick={() => setPrecoKitIn(round2(subtotalTab * (1 - d)))}
+                    style={{ background: C.panel2, border: `1px solid ${C.line}`, color: C.sub, borderRadius: 7, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>−{Math.round(d * 100)}%</button>
+                ))}
+                <span style={{ fontSize: 12, color: descKit > 0 ? C.warn : C.sub, alignSelf: "center" }}>{descKit > 0 ? `desconto de ${pct(descKit)} sobre a tabela (${brl(subtotalTab)})` : `tabela: ${brl(subtotalTab)}`}</span>
+              </div>
+            </div>
+          </Card>
+
+          <Card title={`Resultado do kit (${qtdTotKit} unid.)`} style={{ flex: 1, minWidth: 300 }}>
+            {itensKit.length === 0 && <Hint>Adicione produtos ao kit para ver a análise.</Hint>}
+            {itensKit.length > 0 && (<>
+              <BigStat label="Preço do kit" value={brl(precoKit)} hint={`mínimo viável: ${brl(precoMinKit)}`} accent />
+              <BigStat label="Lucro do kit" value={brl(lucroKit)} hint={`margem ${pct(margemKit)}`} />
+              <BigStat label="Lucro por hora" value={lucroHoraKit != null ? `${brl(lucroHoraKit)}/h` : "—"} hint={`sua hora: ${brl(cHora)} · ${horasKit}h de impressão`} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: `1px solid ${C.line}` }}>
+                <span style={{ fontSize: 14 }}>Status</span>
+                <span style={{ fontWeight: 800, fontFamily: "Sora", color: statusKit[1] }}>{statusKit[0]}</span>
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", marginTop: 12 }}>
+                <div style={{ fontSize: 11, color: C.sub, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Composição de custos do kit · {brl(custoKit)}</div>
+                {detKit.material + detKit.maquina + detKit.mo + detKit.acessorios > 0 ? (<>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Material das peças</span><b style={{ color: C.ink }}>{brl(detKit.material)}</b></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Máquina (energia + depreciação + manut.)</span><b style={{ color: C.ink }}>{brl(detKit.maquina)}</b></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Mão de obra</span><b style={{ color: C.ink }}>{brl(detKit.mo)}</b></div>
+                  {detKit.acessorios > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Acessórios</span><b style={{ color: C.ink }}>{brl(detKit.acessorios)}</b></div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Provisão de falhas</span><b style={{ color: C.ink }}>{brl(Math.max(0, custoProducaoItens - detKit.material - detKit.maquina - detKit.mo - detKit.acessorios))}</b></div>
+                </>) : (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Produção das peças</span><b style={{ color: C.ink }}>{brl(custoProducaoItens)}</b></div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub, borderTop: `1px solid ${C.line}`, paddingTop: 6, marginTop: 6 }}><span>Embalagem do kit</span><b style={{ color: C.ink }}>{brl(embExtra || 0)}</b></div>
+                {(brindeExtra || 0) > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}><span>Brinde do kit</span><b style={{ color: C.ink }}>{brl(brindeExtra)}</b></div>}
+                {economiaLog > 0 && <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 6 }}><span style={{ color: C.good }}>✓ Embalagens individuais dispensadas</span><b style={{ color: C.good }}>− {brl(economiaLog)}</b></div>}
+                {semDetalhe > 0 && <div style={{ fontSize: 11, color: C.warn, marginTop: 6 }}>⚠ {semDetalhe} unid. de produto(s) antigo(s) sem composição salva — usando o custo total (sem separar embalagem). Reprecifique e salve de novo para detalhar.</div>}
+              </div>
+
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", marginTop: 12 }}>
+                <div style={{ fontSize: 11, color: C.sub, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Kit vs vender separado</div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}><span style={{ color: C.sub }}>Separado ({itensKit.length > 0 ? `${qtdTotKit} vendas` : "—"})</span><b>{brl(lucroSeparado)}</b></div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginTop: 2 }}><span style={{ color: C.sub }}>No kit (1 venda)</span><b style={{ color: lucroKit >= lucroSeparado ? C.good : C.warn }}>{brl(lucroKit)}</b></div>
+                <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>{lucroKit >= lucroSeparado ? "✓ O kit rende mais — uma embalagem, uma tarifa e um frete em vez de vários." : `O desconto come ${brl(lucroSeparado - lucroKit)} vs vender separado (mesmo já economizando ${brl(economiaLog)} em embalagens). Vale se o kit destravar a venda que não aconteceria.`}</div>
+              </div>
+              <Hint>Imposto do kit estimado pelo regime padrão das Configurações ({pct(impostoPadrao)}).</Hint>
+            </>)}
+          </Card>
         </div>
-      </Card>
-      <Card>
-        <Label>Comparativo unitário vs kit ({kitQtd} unidades)</Label>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-          <thead><tr style={{ color: C.sub, fontSize: 11, textAlign: "left", textTransform: "uppercase" }}>
-            <th style={{ padding: "8px" }}>Indicador</th>
-            <th style={{ padding: "8px" }}>Unitário</th>
-            <th style={{ padding: "8px" }}>Kit</th>
-            <th style={{ padding: "8px" }}>Análise</th>
-          </tr></thead>
-          <tbody>
-            <KR k="Preço de venda" u={brl(calc.precoPraticado)} kk={brl(precoKit)} />
-            <KR k="Lucro por pedido" u={brl(lucroUnit)} kk={brl(lucroKit)} ok={lucroKit > lucroUnit} note={lucroKit > lucroUnit ? "Kit aumenta lucro total" : "Kit não melhora"} />
-            <KR k="Lucro por unidade" u={brl(lucroUnit)} kk={brl(lucroKitUnit)} ok={lucroKitUnit >= lucroUnit} note={lucroKitUnit >= lucroUnit ? "Mantém/melhora" : "Reduz unitário"} />
-            <KR k="Margem líquida" u={pct(margemUnit)} kk={pct(margemKit)} ok={margemKit >= margemUnit} note={margemKit >= margemUnit ? "Margem preservada" : "Margem menor"} />
-            <KR k={`Lucro/hora${horas > 0 ? ` (${horas}h)` : ""}`} u={lucroHoraUnit != null ? `${brl(lucroHoraUnit)}/h` : "—"} kk={lucroHoraKit != null ? `${brl(lucroHoraKit)}/h` : "—"} ok={lucroHoraKit != null && lucroHoraKit >= (lucroHoraUnit || 0)} note={lucroHoraKit != null ? (lucroHoraKit >= (lucroHoraUnit || 0) ? "Melhor retorno/hora" : "Menor retorno/hora") : ""} />
-          </tbody>
-        </table>
-      </Card>
+        )}
+      </>)}
+
+      {/* ================= ATACADO ================= */}
+      {sub === "atacado" && (<>
+        {!produtos.length && <Card><Empty txt="Cadastre produtos no Catálogo para simular atacado." /></Card>}
+        {produtos.length > 0 && (<>
+          <Card style={{ marginBottom: 16 }}>
+            <Label>Produto e canal</Label>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+              <label><div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Produto</div>
+                <select value={ataSku} onChange={(e) => setAtaSku(e.target.value)} style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+                  <option value="">— selecione —</option>
+                  {produtos.map((p) => <option key={p.sku} value={p.sku}>{p.nome} ({p.sku})</option>)}
+                </select></label>
+              <Sel label="Canal" value={canalAta} onChange={setCanalAta} options={canais.map((c) => c.nome)} />
+            </div>
+            {pAta && (<>
+              <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 8, fontSize: 13 }}>
+                <span style={{ color: C.sub }}>Preço de tabela: <b style={{ color: C.ink }}>{brl(ptAta)}</b></span>
+                <span style={{ color: C.sub }}>Mínimo no varejo: <b style={{ color: C.ink }}>{brl(precoMinVarejo)}</b></span>
+                <span style={{ color: C.sub }}>Desconto máx. (varejo): <b style={{ color: descMaxVarejo > 0.05 ? C.good : C.warn }}>{pct(descMaxVarejo)}</b></span>
+              </div>
+              <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 14px", marginTop: 12 }}>
+                <div style={{ fontSize: 11, color: C.sub, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Composição de custos por unidade</div>
+                <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 12 }}>
+                  {cpAta.det ? (<>
+                    <span style={{ color: C.sub }}>Material <b style={{ color: C.ink }}>{brl(cpAta.det.material)}</b></span>
+                    <span style={{ color: C.sub }}>Máquina <b style={{ color: C.ink }}>{brl(cpAta.det.maquina)}</b></span>
+                    <span style={{ color: C.sub }}>MO <b style={{ color: C.ink }}>{brl(cpAta.det.mo)}</b></span>
+                    {cpAta.det.acessorios > 0 && <span style={{ color: C.sub }}>Acessórios <b style={{ color: C.ink }}>{brl(cpAta.det.acessorios)}</b></span>}
+                  </>) : null}
+                  <span style={{ color: C.sub }}>Produção <b style={{ color: C.accent2 }}>{brl(cpAta.producao)}</b></span>
+                  <span style={{ color: C.sub }}>Logística varejo <b style={{ color: cpAta.logistico > 0 ? C.warn : C.sub }}>{brl(cpAta.logistico)}</b>{cpAta.logistico > 0 && <span style={{ color: C.good }}> ← otimizável no lote</span>}</span>
+                </div>
+                {!cpAta.det && cpAta.logistico === 0 && <div style={{ fontSize: 11, color: C.warn, marginTop: 6 }}>⚠ Produto antigo sem composição salva — usando o custo total como produção. Reprecifique e salve de novo para separar a embalagem.</div>}
+              </div>
+              <Row>
+                <F label="Embalagem do lote (R$, fixo por pedido)" value={embLote} step={1} onChange={setEmbLote} suffix="R$" />
+                <F label="Embalagem por unidade no lote (R$)" value={embUnAta} step={0.1} onChange={setEmbUnAta} suffix="R$" />
+              </Row>
+            </>)}
+          </Card>
+
+          {pAta && (
+            <Card title="Faixas de atacado">
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
+                  <thead><tr>
+                    <th style={thA}>Qtd</th><th style={thA}>Desc. %</th><th style={thA}>Preço un.</th><th style={thA}>Mín. un.</th><th style={thA}>Receita</th>
+                    <th style={thA}>Custo</th><th style={thA}>Lucro total</th><th style={thA}>Lucro/un.</th><th style={thA}>Margem</th><th style={thA}>Horas</th><th style={thA}>Lucro/h</th><th style={thA}>Status</th><th style={thA}></th>
+                  </tr></thead>
+                  <tbody>
+                    {linhasAta.map((l, i) => (
+                      <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}>
+                        <td style={{ ...tdA, width: 80 }}><NumCellCfg value={faixas[i].qtd} onChange={(v) => updFaixa(i, { qtd: Math.max(1, Math.round(v)) })} /></td>
+                        <td style={{ ...tdA, width: 80 }}><NumCellCfg pct value={faixas[i].desc} onChange={(v) => updFaixa(i, { desc: Math.max(0, Math.min(0.95, v)) })} /></td>
+                        <td style={{ ...tdA, fontWeight: 600, color: l.precoUn < l.minFaixa ? C.bad : C.ink }}>{brl(l.precoUn)}</td>
+                        <td style={{ ...tdA, color: C.sub }}>{brl(l.minFaixa)}</td>
+                        <td style={tdA}>{brl(l.receita)}</td>
+                        <td style={tdA}>{brl(l.custoTot)}{l.economiaLogF > 0.005 && <div style={{ fontSize: 10, color: C.good }}>− {brl(l.economiaLogF)} log.</div>}</td>
+                        <td style={{ ...tdA, fontFamily: "Sora", fontWeight: 700, color: l.lucroTot >= 0 ? C.ink : C.bad }}>{brl(l.lucroTot)}</td>
+                        <td style={tdA}>{brl(l.lucroUn)}</td>
+                        <td style={tdA}>{pct(l.margem)}</td>
+                        <td style={tdA}>{round2(l.horasTot)}h</td>
+                        <td style={{ ...tdA, color: l.lucroHora == null ? C.sub : l.lucroHora >= cHora ? C.good : l.lucroHora > 0 ? C.warn : C.bad }}>{l.lucroHora != null ? `${brl(l.lucroHora)}/h` : "—"}</td>
+                        <td style={tdA}><span style={{ fontSize: 11, fontWeight: 700, color: l.status[1], background: `${l.status[1]}22`, padding: "3px 9px", borderRadius: 8 }}>{l.status[0]}</span></td>
+                        <td style={tdA}><MiniBtn onClick={() => delFaixa(i)}>✕</MiniBtn></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: 10 }}><Btn small ghost onClick={addFaixa}>＋ Adicionar faixa</Btn></div>
+              <Hint>O <b>mínimo unitário cai com o volume</b>: a embalagem do lote se dilui entre as unidades e a embalagem individual de varejo sai da conta — essa é a economia real do atacado (coluna Custo, em verde). Mas os dois testes continuam: preço abaixo do mínimo da faixa é prejuízo garantido, e <b>lucro/hora</b> abaixo da sua hora ({brl(cHora)}/h) significa ocupar a impressora por dias rendendo pouco. Confira na aba Produção se a frota tem as horas livres antes de fechar.</Hint>
+            </Card>
+          )}
+        </>)}
+      </>)}
     </div>
   );
 }
@@ -3203,6 +3632,483 @@ const AULAS = [
   { cap: "Cap. 10", titulo: "Kitficação", txt: "Kit só vale se aumentar lucro absoluto e preservar a margem unitária.", foco: "Análise · Kitficação", tab: "kits" },
   { cap: "Cap. 12", titulo: "Gestão da operação", txt: "Acompanhe a esteira: produção, embalar, despacho. Ocupação alta pede atenção.", foco: "Dashboard · Pedidos", tab: "pedidos" },
 ];
+// ============================================================
+// FINANCEIRO — DRE (competência) | Caixa (regime de caixa) | Distribuição (pró-labore)
+// ============================================================
+function addMeses(d, n) { const x = new Date(d); const dia = x.getDate(); x.setMonth(x.getMonth() + n); if (x.getDate() < dia) x.setDate(0); return x; }
+
+function LinhaFin({ k, v, neg, big, sub, cor }) {
+  return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: big ? "10px 0" : "7px 0", borderBottom: `1px solid ${C.line}` }}>
+    <div><span style={{ fontSize: big ? 14 : 13, color: big ? C.ink : C.sub, fontWeight: big ? 700 : 400 }}>{k}</span>{sub && <div style={{ fontSize: 11, color: C.sub, opacity: 0.7 }}>{sub}</div>}</div>
+    <span style={{ fontFamily: "Sora", fontWeight: big ? 800 : 600, fontSize: big ? 20 : 14, color: cor || (neg ? C.bad : C.ink) }}>{neg && v > 0 ? "− " : ""}{brl(Math.abs(v))}</span></div>;
+}
+
+function Financeiro({ pedidos, setPedidos, produtos, config, setConfig, lancamentos, setLancamentos }) {
+  const [sub, setSub] = React.useState("dre");
+  const fin = config.fin || { proLabore: 0, reservaPct: 0.05, custosFixos: [] };
+  const upFin = (patch) => setConfig((c) => ({ ...c, fin: { ...(c.fin || {}), ...patch } }));
+  const canaisCfg = (config.canais && config.canais.length) ? config.canais : CANAIS;
+  const canalDe = (nome) => canaisCfg.find((c) => c.nome === nome) || { comissao: 0, pgto: 0, tarifa: 0, repasseDias: 0 };
+  const brutoPedido = (p) => (p.itens || []).reduce((a, i) => a + (i.preco || 0) * (i.qtd || 1), 0);
+  const qtdPedido = (p) => (p.itens || []).reduce((a, i) => a + (i.qtd || 1), 0);
+  const custoPedido = (p) => (p.itens || []).reduce((a, i) => { const pr = produtos.find((x) => x.sku === i.sku); return a + (pr ? (pr.custo || 0) : 0) * (i.qtd || 1); }, 0);
+
+  const despachados = pedidos.filter((p) => p.etapa === "Despachado");
+  // Recebíveis: pedidos despachados OU com pagamento registrado (venda direta cobrada antes do despacho)
+  const cart = config.cartao || {};
+  const recPagasDe = (p) => p.parcelasPagas || (p.recebido ? { 1: p.recebidoEm || p.data } : {});
+  const elegiveis = pedidos.filter((p) => p.etapa === "Despachado" || (p.pagamento && p.pagamento.forma));
+  const recebiveis = [];
+  elegiveis.forEach((p) => {
+    const c = canalDe(p.canal); const bruto = brutoPedido(p); const qtd = qtdPedido(p);
+    const pg = p.pagamento && p.pagamento.forma ? p.pagamento : null;
+    const pagas = recPagasDe(p);
+    const dBase = pg && pg.dataVenda ? parseDataBR(pg.dataVenda) : parseDataBR(p.data);
+    if (pg && pg.forma === "credito" && (pg.parcelas || 1) > 1 && cart.porParcela !== false) {
+      // crédito parcelado recebido por parcela: 1 recebível por mês
+      const n = pg.parcelas;
+      const liqTotal = Math.max(0, bruto * (1 - taxaPgtoPedido(pg, c, cart)));
+      for (let k = 1; k <= n; k++) {
+        recebiveis.push({ ped: p, parcela: k, totParc: n, canal: p.canal || "—", forma: pg.forma,
+          bruto: round2(bruto / n), liquido: round2(liqTotal / n),
+          prev: dBase ? addDias(dBase, 30 * k) : null, recebido: !!pagas[k], recebidoEm: pagas[k] });
+      }
+    } else if (pg) {
+      // venda direta com pagamento único (pix, dinheiro, débito, crédito à vista ou antecipado)
+      const taxa = taxaPgtoPedido(pg, c, cart);
+      const dias = pg.forma === "credito" ? (cart.repasseDias != null ? cart.repasseDias : 30) : pg.forma === "debito" ? 1 : 0;
+      recebiveis.push({ ped: p, parcela: 1, totParc: 1, canal: p.canal || "—", forma: pg.forma,
+        bruto, liquido: Math.max(0, bruto * (1 - taxa)),
+        prev: dBase ? addDias(dBase, dias) : null, recebido: !!pagas[1], recebidoEm: pagas[1] });
+    } else {
+      // marketplace: repasse do canal após o despacho
+      const liquido = Math.max(0, bruto * (1 - (c.comissao || 0) - (c.pgto || 0)) - (c.tarifa || 0) * qtd);
+      recebiveis.push({ ped: p, parcela: 1, totParc: 1, canal: p.canal || "—", forma: "",
+        bruto, liquido, prev: dBase ? addDias(dBase, c.repasseDias || 0) : null, recebido: !!pagas[1], recebidoEm: pagas[1] });
+    }
+  });
+  recebiveis.sort((a, b) => (a.prev ? a.prev.getTime() : 0) - (b.prev ? b.prev.getTime() : 0));
+
+  // ---- seletor de mês ----
+  const agora = new Date();
+  const mesesSet = new Set([mesKeyOf(agora)]);
+  despachados.forEach((p) => { const d = parseDataBR(p.data); if (d) mesesSet.add(mesKeyOf(d)); });
+  recebiveis.forEach((r) => { if (r.recebidoEm) { const d = parseDataBR(r.recebidoEm); if (d) mesesSet.add(mesKeyOf(d)); } });
+  lancamentos.forEach((l) => { const d = parseDataBR(l.data); if (d) mesesSet.add(mesKeyOf(d)); });
+  const meses = Array.from(mesesSet).sort().reverse();
+  const [mes, setMes] = React.useState(mesKeyOf(agora));
+
+  // ---- DRE (competência: pedidos despachados no mês) ----
+  const pedMes = despachados.filter((p) => { const d = parseDataBR(p.data); return d && mesKeyOf(d) === mes; });
+  let receita = 0, taxasCanal = 0, custoPecas = 0;
+  pedMes.forEach((p) => {
+    const c = canalDe(p.canal); const b = brutoPedido(p);
+    const pg = p.pagamento && p.pagamento.forma ? p.pagamento : null;
+    const txPgto = taxaPgtoPedido(pg, c, cart);
+    receita += b; taxasCanal += b * ((pg ? 0 : (c.comissao || 0)) + txPgto) + (pg ? 0 : (c.tarifa || 0) * qtdPedido(p));
+    custoPecas += custoPedido(p);
+  });
+  const impostos = receita * (config.impostoTaxa || 0);
+  const receitaLiq = receita - taxasCanal - impostos;
+  const margemContrib = receitaLiq - custoPecas;
+  const fixosTotal = (fin.custosFixos || []).reduce((a, f) => a + (f.valor || 0), 0);
+  const proLabore = fin.proLabore || 0;
+  const resultado = margemContrib - fixosTotal - proLabore;
+  const mcPct = receita > 0 ? margemContrib / receita : 0;
+
+  // ---- CAIXA ----
+  const hojeD = new Date(); hojeD.setHours(0, 0, 0, 0);
+  const em30 = addDias(hojeD, 30);
+  const pendentes = recebiveis.filter((r) => !r.recebido);
+  const aReceber30 = pendentes.filter((r) => r.prev && r.prev <= em30).reduce((a, r) => a + r.liquido, 0);
+  const atrasados = pendentes.filter((r) => r.prev && r.prev < hojeD);
+  const saidasPrev30 = lancamentos.filter((l) => l.tipo === "saida" && !l.pago && parseDataBR(l.data) && parseDataBR(l.data) <= em30).reduce((a, l) => a + (l.valor || 0), 0);
+  const projecao30 = aReceber30 - saidasPrev30;
+
+  const marcarRecebido = (id, parcela) => setPedidos((q) => q.map((p) => {
+    if (p.id !== id) return p;
+    const k = parcela || 1;
+    const pagas = { ...(p.parcelasPagas || (p.recebido ? { 1: p.recebidoEm || p.data } : {})) };
+    if (pagas[k]) delete pagas[k]; else pagas[k] = hoje();
+    const todas = (p.pagamento && (p.pagamento.parcelas || 1) > 1) ? Object.keys(pagas).length >= p.pagamento.parcelas : !!pagas[1];
+    return { ...p, parcelasPagas: pagas, recebido: todas, recebidoEm: todas ? (pagas[1] || hoje()) : undefined };
+  }));
+
+  // lançamentos manuais
+  const [lf, setLf] = React.useState({ tipo: "saida", desc: "", valor: 0, data: hoje(), parcelas: 1 });
+  const addLanc = () => {
+    if (!lf.desc || !(lf.valor > 0)) { alert("Preencha a descrição e um valor maior que zero."); return; }
+    const d0 = parseDataBR(lf.data); if (!d0) { alert("Data inválida. Use o formato DD/MM/AAAA."); return; }
+    const n = lf.tipo === "saida" ? Math.max(1, Math.round(lf.parcelas || 1)) : 1;
+    const novos = [];
+    for (let k = 0; k < n; k++) {
+      novos.push({ id: "L-" + Date.now() + "-" + k, tipo: lf.tipo, desc: lf.desc + (n > 1 ? ` (${k + 1}/${n})` : ""), valor: round2(lf.valor / n), data: fmtBR(addMeses(d0, k)), pago: k === 0 && lf.tipo === "entrada" });
+    }
+    setLancamentos((arr) => [...novos, ...arr]);
+    setLf({ tipo: lf.tipo, desc: "", valor: 0, data: hoje(), parcelas: 1 });
+  };
+  const togglePago = (id) => setLancamentos((arr) => arr.map((l) => l.id === id ? { ...l, pago: !l.pago } : l));
+  const delLanc = (id) => { if (confirm("Excluir este lançamento?")) setLancamentos((arr) => arr.filter((l) => l.id !== id)); };
+  const lancOrdenados = [...lancamentos].sort((a, b) => { const da = parseDataBR(a.data), db = parseDataBR(b.data); return (db ? db.getTime() : 0) - (da ? da.getTime() : 0); });
+
+  // ---- DISTRIBUIÇÃO (regime de caixa do mês selecionado) ----
+  const recMes = recebiveis.filter((r) => { if (!r.recebido) return false; const d = parseDataBR(r.recebidoEm || r.ped.data); return d && mesKeyOf(d) === mes; });
+  const recLiq = recMes.reduce((a, r) => a + r.liquido, 0);
+  const recBruto = recMes.reduce((a, r) => a + r.bruto, 0);
+  const entrMan = lancamentos.filter((l) => l.tipo === "entrada" && l.pago && parseDataBR(l.data) && mesKeyOf(parseDataBR(l.data)) === mes).reduce((a, l) => a + (l.valor || 0), 0);
+  const saidasPg = lancamentos.filter((l) => l.tipo === "saida" && l.pago && parseDataBR(l.data) && mesKeyOf(parseDataBR(l.data)) === mes).reduce((a, l) => a + (l.valor || 0), 0);
+  const baseCaixa = recLiq + entrMan;
+  const provImp = recBruto * (config.impostoTaxa || 0);
+  const aposCustos = baseCaixa - provImp - saidasPg - fixosTotal;
+  const reserva = Math.max(0, aposCustos) * (fin.reservaPct || 0);
+  const disponivel = aposCustos - reserva;
+  const cobertura = proLabore > 0 ? Math.max(0, Math.min(1, disponivel / proLabore)) : 0;
+  const lucroRetido = Math.max(0, disponivel - proLabore);
+  // ponto de equilíbrio (vendas brutas necessárias p/ cobrir fixos + pró-labore, pela MC% do mês)
+  const vendasNecessarias = mcPct > 0 ? (fixosTotal + proLabore) / mcPct : 0;
+
+  // custos fixos (edição)
+  const updFixo = (i, patch) => upFin({ custosFixos: (fin.custosFixos || []).map((f, k) => k === i ? { ...f, ...patch } : f) });
+  const addFixo = () => upFin({ custosFixos: [...(fin.custosFixos || []), { nome: "Novo custo fixo", valor: 0 }] });
+  const delFixo = (i) => upFin({ custosFixos: (fin.custosFixos || []).filter((_, k) => k !== i) });
+
+  const statusRec = (r) => {
+    if (r.recebido) return <Tag t="Recebido" />;
+    if (!r.prev) return <Tag t="—" />;
+    if (r.prev < hojeD) return <span style={{ fontSize: 11, fontWeight: 700, color: C.bad, background: `${C.bad}22`, padding: "3px 9px", borderRadius: 8 }}>Atrasado</span>;
+    if (r.prev.getTime() === hojeD.getTime()) return <span style={{ fontSize: 11, fontWeight: 700, color: C.warn, background: `${C.warn}22`, padding: "3px 9px", borderRadius: 8 }}>Hoje</span>;
+    return <span style={{ fontSize: 11, fontWeight: 700, color: C.sub, background: `${C.sub}22`, padding: "3px 9px", borderRadius: 8 }}>Previsto</span>;
+  };
+  const tdS = { padding: "8px 6px", fontSize: 13 };
+  const thS = { padding: "8px 6px", fontSize: 11, color: C.sub, textAlign: "left", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22 }}>Financeiro</div>
+          <div style={{ fontSize: 13, color: C.sub, marginTop: 3 }}>DRE mostra se você lucra. Caixa mostra quando o dinheiro entra. Distribuição mostra quanto pode tirar.</div>
+        </div>
+        <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ background: C.panel, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 12px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
+          {meses.map((m) => <option key={m} value={m}>{mesLabel(m)}</option>)}
+        </select>
+      </div>
+
+      <Fonte value={sub} onChange={setSub} opcoes={[["dre", "📊 DRE (competência)"], ["caixa", "💵 Caixa"], ["dist", "🪙 Distribuição"]]} />
+
+      {/* ================= DRE ================= */}
+      {sub === "dre" && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <Card title={`DRE de ${mesLabel(mes)} — regime de competência`} style={{ flex: 2, minWidth: 340 }}>
+            <LinhaFin k="Receita bruta" sub={`${pedMes.length} pedido(s) despachado(s) no mês`} v={receita} big />
+            <LinhaFin k="Comissões, taxas e tarifas dos canais" v={taxasCanal} neg />
+            <LinhaFin k={`Impostos (${pct(config.impostoTaxa || 0)})`} v={impostos} neg />
+            <LinhaFin k="Receita líquida" v={receitaLiq} big />
+            <LinhaFin k="Custo das peças vendidas" sub="produção + despacho (do catálogo)" v={custoPecas} neg />
+            <LinhaFin k={`Margem de contribuição (${pct(mcPct)})`} v={margemContrib} big cor={margemContrib >= 0 ? C.accent2 : C.bad} />
+            <LinhaFin k="Custos fixos do negócio" v={fixosTotal} neg />
+            <LinhaFin k="Pró-labore (seu salário alvo)" v={proLabore} neg />
+            <LinhaFin k="Resultado do mês" v={resultado} big cor={resultado >= 0 ? C.good : C.bad} />
+            <Hint>A DRE reconhece a venda no mês do <b>despacho</b>, independente de quando o dinheiro cai (isso é o regime de competência). Compras de insumo não aparecem aqui — viram estoque e entram como custo quando a peça é vendida.</Hint>
+          </Card>
+          <Card title="Leitura rápida" style={{ flex: 1, minWidth: 280 }}>
+            <BigStat label="Margem de contribuição" value={pct(mcPct)} hint="quanto sobra de cada R$ vendido" accent />
+            <BigStat label="Ponto de equilíbrio" value={vendasNecessarias > 0 ? brl(vendasNecessarias) : "—"} hint="vendas brutas/mês p/ cobrir fixos + pró-labore" />
+            <BigStat label="Vendido este mês" value={brl(receita)} hint={receita >= vendasNecessarias && vendasNecessarias > 0 ? "meta atingida ✓" : vendasNecessarias > 0 ? `faltam ${brl(Math.max(0, vendasNecessarias - receita))}` : "sem vendas no mês"} />
+            <Hint>Se o resultado é positivo mas o caixa aperta, o dinheiro está preso nos repasses — veja a aba Caixa. Se o caixa está bom mas o resultado é negativo, você pode estar consumindo capital de giro.</Hint>
+          </Card>
+        </div>
+      )}
+
+      {/* ================= CAIXA ================= */}
+      {sub === "caixa" && (<>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginBottom: 16 }}>
+          <KPI label="A receber (30 dias)" value={brl(aReceber30)} c={C.blue} />
+          <KPI label="Repasses atrasados" value={`${atrasados.length} · ${brl(atrasados.reduce((a, r) => a + r.liquido, 0))}`} c={atrasados.length ? C.bad : C.good} />
+          <KPI label="Saídas previstas (30 dias)" value={brl(saidasPrev30)} c={C.warn} />
+          <KPI label="Projeção líquida (30 dias)" value={brl(projecao30)} c={projecao30 >= 0 ? C.good : C.bad} />
+        </div>
+
+        <Card title="Recebíveis — repasses dos pedidos despachados">
+          {recebiveis.length === 0 && <Hint>Nenhum pedido despachado ainda. Quando um pedido chega em "Despachado" no kanban, ele aparece aqui com a data prevista de repasse do canal (configurável em Configurações → Canais).</Hint>}
+          {recebiveis.length > 0 && (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+                <thead><tr><th style={thS}>Pedido</th><th style={thS}>Cliente</th><th style={thS}>Canal / forma</th><th style={thS}>Venda</th><th style={thS}>Repasse previsto</th><th style={thS}>Líquido</th><th style={thS}>Status</th><th style={thS}></th></tr></thead>
+                <tbody>
+                  {recebiveis.map((r) => (
+                    <tr key={r.ped.id + "-" + r.parcela} style={{ borderTop: `1px solid ${C.line}`, opacity: r.recebido ? 0.65 : 1 }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{r.ped.id}{r.totParc > 1 && <span style={{ color: C.sub, fontWeight: 400 }}> · {r.parcela}/{r.totParc}</span>}</td>
+                      <td style={tdS}>{r.ped.cliente}</td>
+                      <td style={tdS}>{r.canal}{r.forma && <div style={{ fontSize: 10, color: C.accent2 }}>{FORMAS_PGTO[r.forma] || r.forma}{r.forma === "credito" && r.totParc > 1 ? ` ${r.totParc}×` : ""}</div>}</td>
+                      <td style={tdS}>{r.ped.pagamento && r.ped.pagamento.dataVenda ? r.ped.pagamento.dataVenda : r.ped.data}</td>
+                      <td style={tdS}>{fmtBR(r.prev)}</td>
+                      <td style={{ ...tdS, fontFamily: "Sora", fontWeight: 700 }}>{brl(r.liquido)}<div style={{ fontSize: 10, color: C.sub, fontWeight: 400 }}>bruto {brl(r.bruto)}</div></td>
+                      <td style={tdS}>{statusRec(r)}</td>
+                      <td style={tdS}><Btn small ghost={r.recebido} onClick={() => marcarRecebido(r.ped.id, r.parcela)}>{r.recebido ? "Desfazer" : "✓ Recebi"}</Btn></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <Hint>O líquido estimado desconta comissão, taxa de pagamento e tarifa do canal. Impostos não são descontados aqui — eles são provisionados na Distribuição.</Hint>
+        </Card>
+
+        <Card title="Lançamentos manuais — compras, contas e outras entradas/saídas" style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div style={{ width: 150 }}><Sel label="Tipo" value={lf.tipo === "saida" ? "Saída (pagar)" : "Entrada (receber)"} onChange={(v) => setLf({ ...lf, tipo: v.startsWith("Saída") ? "saida" : "entrada" })} options={["Saída (pagar)", "Entrada (receber)"]} /></div>
+            <div style={{ flex: 2, minWidth: 160 }}><F label="Descrição" text value={lf.desc} onChange={(v) => setLf({ ...lf, desc: v })} /></div>
+            <div style={{ width: 110 }}><F label="Valor total (R$)" value={lf.valor} onChange={(v) => setLf({ ...lf, valor: v })} /></div>
+            <div style={{ width: 120 }}><F label="Data (1ª parcela)" text value={lf.data} onChange={(v) => setLf({ ...lf, data: v })} /></div>
+            {lf.tipo === "saida" && <div style={{ width: 90 }}><F label="Parcelas" value={lf.parcelas} onChange={(v) => setLf({ ...lf, parcelas: v })} /></div>}
+            <div style={{ marginBottom: 12 }}><Btn small onClick={addLanc}>+ Lançar</Btn></div>
+          </div>
+          <Hint>Compra parcelada no cartão? Lance o valor total com o nº de parcelas — o sistema cria um desencaixe por mês. Marque cada parcela como paga quando a fatura fechar. Lembre: a compra de insumo entra no caixa aqui, mas na DRE ela vira estoque (não despesa).</Hint>
+          {lancOrdenados.length > 0 && (
+            <div style={{ overflowX: "auto", marginTop: 8 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                <thead><tr><th style={thS}>Pago</th><th style={thS}>Data</th><th style={thS}>Descrição</th><th style={thS}>Tipo</th><th style={thS}>Valor</th><th style={thS}></th></tr></thead>
+                <tbody>
+                  {lancOrdenados.map((l) => (
+                    <tr key={l.id} style={{ borderTop: `1px solid ${C.line}`, opacity: l.pago ? 0.65 : 1 }}>
+                      <td style={tdS}><input type="checkbox" checked={!!l.pago} onChange={() => togglePago(l.id)} style={{ accentColor: C.accent, width: 16, height: 16, cursor: "pointer" }} /></td>
+                      <td style={tdS}>{l.data}</td>
+                      <td style={tdS}>{l.desc}</td>
+                      <td style={tdS}><span style={{ fontSize: 11, fontWeight: 700, color: l.tipo === "saida" ? C.bad : C.good }}>{l.tipo === "saida" ? "Saída" : "Entrada"}</span></td>
+                      <td style={{ ...tdS, fontFamily: "Sora", fontWeight: 700, color: l.tipo === "saida" ? C.bad : C.good }}>{l.tipo === "saida" ? "−" : "+"} {brl(l.valor)}</td>
+                      <td style={tdS}><MiniBtn onClick={() => delLanc(l.id)}>✕</MiniBtn></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </>)}
+
+      {/* ================= DISTRIBUIÇÃO ================= */}
+      {sub === "dist" && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <Card title={`Cascata de ${mesLabel(mes)} — o que dá para tirar`} style={{ flex: 2, minWidth: 340 }}>
+            <LinhaFin k="Recebido no mês (líquido dos canais)" sub={`${recMes.length} repasse(s) confirmado(s) + entradas manuais`} v={baseCaixa} big />
+            <LinhaFin k={`Provisão de impostos (${pct(config.impostoTaxa || 0)} s/ bruto recebido)`} v={provImp} neg />
+            <LinhaFin k="Compras e saídas pagas no mês" sub="lançamentos marcados como pagos" v={saidasPg} neg />
+            <LinhaFin k="Custos fixos do negócio" v={fixosTotal} neg />
+            <LinhaFin k={`Reserva de segurança (${pct(fin.reservaPct || 0)})`} v={reserva} neg />
+            <LinhaFin k="Disponível para pró-labore" v={disponivel} big cor={disponivel >= proLabore ? C.good : disponivel > 0 ? C.warn : C.bad} />
+            <div style={{ margin: "14px 0 6px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                <span style={{ color: C.sub }}>Cobertura do seu salário alvo ({brl(proLabore)})</span>
+                <b style={{ color: cobertura >= 1 ? C.good : C.warn }}>{pct(cobertura)}</b>
+              </div>
+              <div style={{ height: 10, background: C.bg, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ width: `${cobertura * 100}%`, height: "100%", background: cobertura >= 1 ? C.good : C.warn, borderRadius: 6, transition: "width .3s" }} />
+              </div>
+            </div>
+            {disponivel >= proLabore && proLabore > 0 && <Hint>✓ O mês cobre seu pró-labore. Saque até <b style={{ color: C.good }}>{brl(proLabore)}</b> e ainda sobra <b>{brl(lucroRetido)}</b> de lucro retido — divida entre reinvestimento e bônus do dono.</Hint>}
+            {disponivel < proLabore && disponivel > 0 && <Hint>⚠ O mês cobre só parte do seu salário. Disponível: <b>{brl(disponivel)}</b> (faltam {brl(proLabore - disponivel)}). Opções: sacar menos este mês, puxar da reserva acumulada, ou olhar o ponto de equilíbrio na DRE.</Hint>}
+            {disponivel <= 0 && <Hint>✗ Sem saldo disponível para pró-labore este mês. Confirme se os repasses foram marcados como recebidos na aba Caixa antes de concluir.</Hint>}
+            <Hint>Regra de ouro: distribua só no fechamento do mês, nunca conforme o dinheiro entra. A cascata roda sobre o <b>caixa realizado</b> — vendas ainda não repassadas não contam.</Hint>
+          </Card>
+
+          <Card title="Parâmetros da distribuição" style={{ flex: 1, minWidth: 290 }}>
+            <F label="Pró-labore alvo mensal (R$)" value={fin.proLabore} step={100} onChange={(v) => upFin({ proLabore: v })} suffix="R$" />
+            <F label="Reserva de segurança (%)" value={round2((fin.reservaPct || 0) * 100)} step={1} onChange={(v) => upFin({ reservaPct: (v || 0) / 100 })} suffix="%" />
+            <div style={{ margin: "14px 0 8px" }}><Label>Custos fixos mensais</Label></div>
+            {(fin.custosFixos || []).map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                <input type="text" value={f.nome} onChange={(e) => updFixo(i, { nome: e.target.value })} style={{ flex: 2, background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "7px 9px", borderRadius: 7, fontSize: 13, fontFamily: "inherit", minWidth: 0 }} />
+                <div style={{ flex: 1, minWidth: 80 }}><NumCellCfg value={f.valor} onChange={(v) => updFixo(i, { valor: v })} /></div>
+                <MiniBtn onClick={() => delFixo(i)}>✕</MiniBtn>
+              </div>
+            ))}
+            <Btn small ghost onClick={addFixo}>+ Adicionar custo fixo</Btn>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: C.sub }}>Total fixos + pró-labore</span><b style={{ fontFamily: "Sora" }}>{brl(fixosTotal + proLabore)}</b>
+            </div>
+            <Hint>Internet, contador, assinaturas, aluguel do espaço… Tudo que existe mesmo sem vender nada. Estes valores também entram na DRE.</Hint>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Célula numérica compacta para tabelas (decimal BR; pct=true exibe/recebe em %)
+function NumCellCfg({ value, onChange, pct }) {
+  const [draft, setDraft] = React.useState(null);
+  const inS = { width: "100%", minWidth: 56, background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "6px 8px", borderRadius: 7, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" };
+  const show = draft != null ? draft : String(pct ? round2((value || 0) * 100) : (value || 0)).replace(".", ",");
+  return <input type="text" inputMode="decimal" value={show} style={inS}
+    onChange={(e) => { const v = e.target.value; setDraft(v); const n = parseFloat(v.replace(",", ".")); if (!isNaN(n)) onChange(pct ? n / 100 : n); else if (v === "") onChange(0); }}
+    onBlur={() => setDraft(null)} />;
+}
+
+function Configuracoes({ config, setConfig, cond, setCond, resetDados, exportarBackup, importarBackup }) {
+  const up = (patch) => setConfig((c) => ({ ...c, ...patch }));
+  const upCond = (patch) => setCond((c) => ({ ...c, ...patch }));
+  const fileRef = React.useRef(null);
+  const horasProd = (config.horasMes || 0) * (config.pctProdutivo || 0);
+  const custoHora = custoHoraEfetivo(config);
+  const custoMensalMO = (config.salarioBase || 0) * (config.encargosMult || 1);
+
+  const updCanal = (idx, patch) => up({ canais: (config.canais || []).map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
+  const addCanal = () => up({ canais: [...(config.canais || []), { nome: "Novo canal", comissao: 0.15, pgto: 0, tarifa: 0, ads: 0.08, frete: 0, seg: 0.03, repasseDias: 14 }] });
+  const delCanal = (idx) => { if (confirm("Remover este canal?")) up({ canais: (config.canais || []).filter((_, i) => i !== idx) }); };
+  const restaurarCanais = () => { if (confirm("Restaurar os canais para o padrão do sistema?")) up({ canais: JSON.parse(JSON.stringify(CANAIS)) }); };
+
+  const onImportFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => { try { importarBackup(JSON.parse(reader.result)); } catch { alert("Não foi possível ler o arquivo. Verifique se é um backup válido (.json)."); } };
+    reader.readAsText(f);
+    e.target.value = "";
+  };
+
+  const thS = { padding: "8px 6px", fontSize: 11, color: C.sub, textAlign: "left", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" };
+  const inS = { width: "100%", minWidth: 56, background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "6px 8px", borderRadius: 7, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" };
+  const NumCell = NumCellCfg;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22 }}>Configurações</div>
+          <div style={{ fontSize: 13, color: C.sub, marginTop: 3 }}>Parâmetros globais que alimentam a precificação, os orçamentos e os módulos do sistema.</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+        {/* ===== MÃO DE OBRA ===== */}
+        <Card title="Mão de obra" style={{ flex: 1, minWidth: 330 }}>
+          <Fonte value={config.moModo || "hora"} onChange={(v) => up({ moModo: v })}
+            opcoes={[["hora", "Valor por hora direto"], ["salario", "Derivar de um salário"]]} />
+          {config.moModo !== "salario" && (
+            <F label="Custo da sua hora de trabalho (R$/h)" value={config.moHoraDireta} step={1} onChange={(v) => up({ moHoraDireta: v })} suffix="R$/h" />
+          )}
+          {config.moModo === "salario" && (<>
+            <Row>
+              <F label="Salário / pró-labore mensal (R$)" value={config.salarioBase} step={100} onChange={(v) => up({ salarioBase: v })} suffix="R$" />
+              <F label="Multiplicador de encargos" value={config.encargosMult} step={0.05} onChange={(v) => up({ encargosMult: v })} suffix="×" />
+            </Row>
+            <div style={{ display: "flex", gap: 6, marginTop: -4, marginBottom: 12, flexWrap: "wrap" }}>
+              {[["Sem encargos", 1.0], ["Pró-labore (~1,3×)", 1.3], ["CLT (~1,7×)", 1.7]].map(([lbl, m]) => (
+                <button key={lbl} onClick={() => up({ encargosMult: m })}
+                  style={{ background: Math.abs((config.encargosMult || 1) - m) < 0.001 ? C.accent : C.panel2, color: Math.abs((config.encargosMult || 1) - m) < 0.001 ? "#1a1207" : C.sub, border: `1px solid ${C.line}`, borderRadius: 7, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{lbl}</button>
+              ))}
+            </div>
+            <Row>
+              <F label="Horas trabalhadas por mês" value={config.horasMes} step={4} onChange={(v) => up({ horasMes: v })} suffix="h" />
+              <F label="% do tempo produtivo (0–1)" value={config.pctProdutivo} step={0.05} onChange={(v) => up({ pctProdutivo: v })} />
+            </Row>
+            <div style={{ background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 14px", marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub, marginBottom: 4 }}>
+                <span>Custo mensal (salário × encargos)</span><b style={{ color: C.ink }}>{brl(custoMensalMO)}</b></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub, marginBottom: 8 }}>
+                <span>Horas produtivas no mês</span><b style={{ color: C.ink }}>{round2(horasProd)} h</b></div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
+                <span style={{ fontSize: 13 }}>Custo da hora calculado</span>
+                <span style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 22, color: C.accent2 }}>{brl(custoHora)}<span style={{ fontSize: 12, color: C.sub, fontWeight: 400 }}>/h</span></span></div>
+            </div>
+            <Hint>O tempo produtivo é a fração das suas horas realmente dedicada às peças (setup, retirada, acabamento, embalagem). Atendimento, compras e pausas ficam de fora — usar 100% subprecifica o seu trabalho.</Hint>
+          </>)}
+          <Hint>Este valor aparece como sugestão na etapa de mão de obra do Precificar (botão "Aplicar").</Hint>
+        </Card>
+
+        {/* ===== PARÂMETROS DE PRECIFICAÇÃO ===== */}
+        <Card title="Parâmetros de precificação" style={{ flex: 1, minWidth: 330 }}>
+          <Row>
+            <F label="Lucro-alvo padrão por peça (R$)" value={config.lucroAlvoRS} step={1} onChange={(v) => up({ lucroAlvoRS: v })} suffix="R$" />
+            <F label="Markup do preço premium (%)" value={round2((config.markupPremium || 0) * 100)} step={1} onChange={(v) => up({ markupPremium: (v || 0) / 100 })} suffix="%" />
+          </Row>
+          <Row>
+            <F label="Tarifa de energia padrão (R$/kWh)" value={config.tarifaEnergia} step={0.05} onChange={(v) => up({ tarifaEnergia: v })} suffix="R$" />
+            <div />
+          </Row>
+          <Sel label="Regime de imposto padrão" value={config.impostoRegime || "Simples Nacional"} onChange={(v) => { const reg = IMPOSTOS.find((x) => x.regime === v); up({ impostoRegime: v, impostoTaxa: reg ? reg.taxa : config.impostoTaxa }); }} options={IMPOSTOS.map((x) => x.regime)} />
+          <F label="Taxa de imposto padrão (%)" value={round2((config.impostoTaxa || 0) * 100)} step={0.5} onChange={(v) => up({ impostoTaxa: (v || 0) / 100 })} suffix="%" />
+          <Hint>O lucro-alvo e o preço premium alimentam o Precificar; a tarifa de energia vira o padrão de novas máquinas cadastradas.</Hint>
+        </Card>
+      </div>
+
+      {/* ===== CANAIS DE VENDA ===== */}
+      <Card title="Canais de venda (padrões do sistema)" style={{ marginTop: 16 }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+            <thead><tr>
+              <th style={{ ...thS, minWidth: 130 }}>Canal</th><th style={thS}>Comissão %</th><th style={thS}>Tx. pgto %</th>
+              <th style={thS}>Tarifa fixa R$</th><th style={thS}>Ads %</th><th style={thS}>Reserva %</th><th style={thS}>Repasse (dias)</th><th style={thS}></th>
+            </tr></thead>
+            <tbody>
+              {(config.canais || []).map((c, i) => (
+                <tr key={i} style={{ borderTop: `1px solid ${C.line}` }}>
+                  <td style={{ padding: "6px 6px" }}><input type="text" value={c.nome} style={{ ...inS, minWidth: 120 }} onChange={(e) => updCanal(i, { nome: e.target.value })} /></td>
+                  <td style={{ padding: "6px 6px" }}><NumCell pct value={c.comissao} onChange={(v) => updCanal(i, { comissao: v })} /></td>
+                  <td style={{ padding: "6px 6px" }}><NumCell pct value={c.pgto} onChange={(v) => updCanal(i, { pgto: v })} /></td>
+                  <td style={{ padding: "6px 6px" }}><NumCell value={c.tarifa} onChange={(v) => updCanal(i, { tarifa: v })} /></td>
+                  <td style={{ padding: "6px 6px" }}><NumCell pct value={c.ads} onChange={(v) => updCanal(i, { ads: v })} /></td>
+                  <td style={{ padding: "6px 6px" }}><NumCell pct value={c.seg} onChange={(v) => updCanal(i, { seg: v })} /></td>
+                  <td style={{ padding: "6px 6px" }}><NumCell value={c.repasseDias} onChange={(v) => updCanal(i, { repasseDias: Math.max(0, Math.round(v)) })} /></td>
+                  <td style={{ padding: "6px 6px" }}><MiniBtn onClick={() => delCanal(i)}>✕</MiniBtn></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <Btn small ghost onClick={addCanal}>+ Adicionar canal</Btn>
+          <Btn small ghost onClick={restaurarCanais}>Restaurar padrão</Btn>
+        </div>
+        <Hint>Estes canais são usados como padrão na tabela de cenários do Precificar (quando você não personaliza os canais dentro do produto). O <b>prazo de repasse</b> indica em quantos dias o dinheiro da venda cai na sua conta — venda direta normalmente é 0 (Pix) e marketplaces levam de 14 a 30 dias. Ele será a base do futuro módulo de Caixa.</Hint>
+      </Card>
+
+      {/* ===== CARTÃO (VENDA DIRETA) ===== */}
+      <Card title="Cartão — venda direta (maquininha / gateway)" style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 130 }}><F label="Taxa débito (%)" value={round2(((config.cartao || {}).taxaDebito || 0) * 100)} step={0.1} onChange={(v) => up({ cartao: { ...(config.cartao || {}), taxaDebito: (v || 0) / 100 } })} suffix="%" /></div>
+          <div style={{ flex: 1, minWidth: 130 }}><F label="Crédito à vista (%)" value={round2(((config.cartao || {}).taxaVista || 0) * 100)} step={0.1} onChange={(v) => up({ cartao: { ...(config.cartao || {}), taxaVista: (v || 0) / 100 } })} suffix="%" /></div>
+          <div style={{ flex: 1, minWidth: 130 }}><F label="Crédito parcelado (%)" value={round2(((config.cartao || {}).taxaParcela || 0) * 100)} step={0.1} onChange={(v) => up({ cartao: { ...(config.cartao || {}), taxaParcela: (v || 0) / 100 } })} suffix="%" /></div>
+          <div style={{ flex: 1, minWidth: 130 }}><F label="Repasse do crédito (dias)" value={(config.cartao || {}).repasseDias != null ? config.cartao.repasseDias : 30} step={1} onChange={(v) => up({ cartao: { ...(config.cartao || {}), repasseDias: Math.max(0, Math.round(v)) } })} suffix="dias" /></div>
+        </div>
+        <Fonte value={(config.cartao || {}).porParcela === false ? "antecipado" : "parcela"} onChange={(v) => up({ cartao: { ...(config.cartao || {}), porParcela: v === "parcela" } })}
+          opcoes={[["parcela", "Recebo por parcela (1/mês)"], ["antecipado", "Recebo antecipado (tudo em D+X)"]]} />
+        <Hint>Usado quando um orçamento é aprovado com pagamento em cartão. No modo parcelado, cada parcela vira um recebível mensal no Financeiro; no antecipado, o valor inteiro entra no prazo de repasse (taxa de antecipação já deve estar embutida na taxa de crédito parcelado).</Hint>
+      </Card>
+
+      {/* ===== CONDIÇÕES COMERCIAIS ===== */}
+      <Card title="Condições comerciais (padrão dos orçamentos)" style={{ marginTop: 16 }}>
+        <Row>
+          <F label="Nome da empresa / marca" text value={cond.empresa} onChange={(v) => upCond({ empresa: v })} />
+          <F label="Contato (WhatsApp / e-mail)" text value={cond.contatoEmpresa} onChange={(v) => upCond({ contatoEmpresa: v })} />
+        </Row>
+        <Row>
+          <F label="Sinal para iniciar produção (%)" value={cond.sinal} step={5} onChange={(v) => upCond({ sinal: v })} suffix="%" />
+          <F label="Validade do orçamento" text value={cond.validade} onChange={(v) => upCond({ validade: v })} />
+        </Row>
+        <Row>
+          <F label="Prazo de produção" text value={cond.prazoProducao} onChange={(v) => upCond({ prazoProducao: v })} />
+          <F label="Prazo de entrega" text value={cond.prazoEntrega} onChange={(v) => upCond({ prazoEntrega: v })} />
+        </Row>
+        <F label="Forma de pagamento" text value={cond.pagamento} onChange={(v) => upCond({ pagamento: v })} />
+        <Hint>Estes valores preenchem automaticamente os orçamentos novos (PDF e WhatsApp) e podem ser ajustados por orçamento.</Hint>
+      </Card>
+
+      {/* ===== DADOS E BACKUP ===== */}
+      <Card title="Dados e backup" style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn small onClick={exportarBackup}>⬇ Exportar backup (.json)</Btn>
+          <Btn small ghost onClick={() => fileRef.current && fileRef.current.click()}>⬆ Importar backup</Btn>
+          <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={onImportFile} />
+          <Btn small ghost onClick={() => { if (confirm("Isso apaga TODOS os dados (produtos, insumos, máquinas, pedidos, orçamentos e configurações). Tem certeza?") && confirm("Última confirmação: deseja realmente zerar tudo? Esta ação não pode ser desfeita.")) resetDados(); }}>🗑 Zerar todos os dados</Btn>
+        </div>
+        <Hint>O backup inclui catálogo, insumos, máquinas, orçamentos, pedidos, condições comerciais e estas configurações. Exporte regularmente — especialmente antes de importar dados ou trocar de dispositivo.</Hint>
+      </Card>
+    </div>
+  );
+}
+
 function Academia({ go, plan }) {
   return (
     <div>
