@@ -951,10 +951,10 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
   };
 
   // Cancelar pedido em qualquer etapa (inclusive após aprovação do orçamento)
-  const cancelarPedido = (id) => {
+  const cancelarPedido = (id, silent) => {
     const p = pedidos.find((x) => x.id === id);
     if (!p) return;
-    if (!window.confirm(`Cancelar o pedido ${p.id} (${p.cliente})? Esta ação não pode ser desfeita.`)) return;
+    if (!silent && !window.confirm(`Cancelar o pedido ${p.id} (${p.cliente})? Esta ação não pode ser desfeita.`)) return;
     // o insumo só foi baixado a partir da etapa Embalar (Produzir -> Embalar) -> devolve ao estoque
     if (p.etapa === "Embalar" || p.etapa === "Despachado") {
       p.itens.forEach((it) => {
@@ -1037,7 +1037,7 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
         {tab === "dashboard" && <Dashboard pedidos={pedidos} fila={fila} produtos={produtos} insumos={insumos} itensBaixos={itensBaixos} go={setTab} maquinas={maquinas} pratos={pratos} config={config} />}
         {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} config={config} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
         {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} config={config} />}
-        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} />}
+        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} pedidos={pedidos} cancelarPedido={cancelarPedido} />}
         {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} insumos={insumos} cancelarPedido={cancelarPedido} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} config={config} />}
@@ -2582,7 +2582,7 @@ function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, con
 }
 
 // ---------- 3 · ORÇAMENTOS ----------
-function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond, config }) {
+function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond, config, pedidos, cancelarPedido }) {
   const [edit, setEdit] = React.useState(null);
   const [verCond, setVerCond] = React.useState(false);
   const [aprovando, setAprovando] = React.useState(null);
@@ -2596,6 +2596,16 @@ function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCon
     setOrcamentos((arr) => arr.map((x) => x.id === o.id ? { ...o, total } : x)); setEdit(null);
   };
   const excluir = (id) => { if (confirm("Excluir orçamento?")) { setOrcamentos((arr) => arr.filter((x) => x.id !== id)); setEdit(null); } };
+  // Cancela a aprovação: volta o orçamento para Rascunho e (opcional) remove o pedido gerado
+  const cancelarAprovacao = (o) => {
+    const pedVinc = (pedidos || []).find((p) => p.origem === "Orçamento " + o.id);
+    const msg = pedVinc
+      ? `Cancelar a aprovação do orçamento ${o.id}?\n\nEle voltará para Rascunho e o pedido vinculado (${pedVinc.id}) será cancelado, devolvendo os insumos ao estoque quando aplicável.`
+      : `Cancelar a aprovação do orçamento ${o.id}? Ele voltará para Rascunho.`;
+    if (!window.confirm(msg)) return;
+    if (pedVinc && cancelarPedido) cancelarPedido(pedVinc.id, true);
+    setOrcamentos((arr) => arr.map((x) => x.id === o.id ? { ...x, status: "Rascunho", formaPagamento: undefined, parcelasPgto: undefined } : x));
+  };
   return (
     <div>
       <H title="3 · Orçamentos" sub="Monte com vários itens, defina condições e envie por WhatsApp ou PDF" />
@@ -2619,6 +2629,7 @@ function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCon
               <Btn small ghost onClick={() => enviarWhats(o, cond)}>WhatsApp</Btn>
               <Btn small ghost onClick={() => exportarPDF(o, cond)}>PDF</Btn>
               {o.status !== "Aprovado" && <Btn small onClick={() => setAprovando(o)}>Aprovar → Pedido</Btn>}
+              {o.status === "Aprovado" && <Btn small ghost onClick={() => cancelarAprovacao(o)}>Cancelar aprovação</Btn>}
             </div>
           </div>
         </Card>
