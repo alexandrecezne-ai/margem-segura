@@ -1022,7 +1022,7 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
         {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} config={config} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
         {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} config={config} />}
         {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} />}
-        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} />}
+        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} insumos={insumos} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} config={config} />}
         {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} setPedidos={setPedidos} setInsumos={setInsumos} insumos={insumos} prodAvulsa={prodAvulsa} setProdAvulsa={setProdAvulsa} />}
@@ -2779,7 +2779,19 @@ function CondicoesModal({ cond, setCond, close }) {
 }
 
 // ---------- 4 · PEDIDOS (esteira) ----------
-function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config }) {
+function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config, insumos }) {
+  // calcula os insumos que estão travando um pedido em "Aguardando insumo"
+  const faltantes = (p) => {
+    const agg = {};
+    (p.itens || []).forEach((it) => {
+      if (!it.insumoId || !it.necessario) return;
+      const ins = (insumos || []).find((x) => x.id === it.insumoId);
+      if (!ins) return;
+      if (!agg[it.insumoId]) agg[it.insumoId] = { nome: ins.nome, un: ins.un || "", estoque: ins.estoque || 0, precisa: 0 };
+      agg[it.insumoId].precisa += it.necessario;
+    });
+    return Object.values(agg).filter((a) => a.estoque < a.precisa);
+  };
   const [cliente, setCliente] = React.useState("");
   const [canal, setCanal] = React.useState("Mercado Livre");
   const [itens, setItens] = React.useState([]);
@@ -2857,7 +2869,21 @@ function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config }) {
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, borderTop: `1px solid ${C.line}`, marginTop: 4, paddingTop: 4 }}>
                   <span>Total</span><span>{brl(totalPed(p))}</span>
                 </div>
-                {p.etapa === "Aguardando insumo" && <div style={{ fontSize: 11, color: C.bad, margin: "6px 0" }}>Falta insumo para algum item. Reponha em Insumos.</div>}
+                {p.etapa === "Aguardando insumo" && (() => {
+                  const falt = faltantes(p);
+                  if (!falt.length) return <div style={{ fontSize: 11, color: C.warn, margin: "6px 0" }}>Estoque suficiente — clique para liberar produção.</div>;
+                  return (
+                    <div style={{ fontSize: 11, color: C.bad, margin: "6px 0", background: "rgba(248,113,113,.08)", border: `1px solid ${C.bad}`, borderRadius: 8, padding: "6px 8px" }}>
+                      <div style={{ fontWeight: 700, marginBottom: 3 }}>⚠ Insumo travando:</div>
+                      {falt.map((a, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                          <span>{a.nome}</span>
+                          <span style={{ whiteSpace: "nowrap" }}>tem {round2(a.estoque)} / precisa {round2(a.precisa)} {a.un} <b>(falta {round2(a.precisa - a.estoque)})</b></span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {col.btn && <div style={{ marginTop: 8 }}><Btn small full onClick={() => avancar(p.id)}>{col.btn}</Btn></div>}
               </div>
             ))}
