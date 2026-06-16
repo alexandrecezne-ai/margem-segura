@@ -869,9 +869,10 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
     const prod = produtos.find((p) => p.sku === it.sku);
     const qtd = it.qtd || 1;
     const temPronto = prod && prod.estoquePronto >= qtd;
-    const insumoId = prod ? prod.insumoId : null;
+    // insumo e consumo dependem da COR escolhida (cada cor = um filamento específico)
+    const { insumoId, consumoUn } = resolverInsumoCor(prod, it.cor, insumos);
     const insumo = insumoId ? insumos.find((i) => i.id === insumoId) : null;
-    const necessario = prod ? (prod.consumoUn || 0) * qtd : 0;
+    const necessario = (consumoUn || 0) * qtd;
     const temInsumo = !insumo || insumo.estoque >= necessario;
     return { sku: it.sku, produto: it.produto || (prod ? prod.nome : it.nome), qtd, cor: it.cor || "",
       preco: it.preco || (prod ? (prod.precoPraticado || prod.precoSaudavel) : 0),
@@ -966,6 +967,21 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
     setPedidos((q) => q.filter((x) => x.id !== id));
   };
 
+  // Trocar a cor de um item do pedido ao longo da cadeia — recalcula qual insumo terá baixa e o consumo
+  const mudarCorItem = (pedidoId, sku, corAntiga, novaCor) => {
+    setPedidos((q) => q.map((p) => {
+      if (p.id !== pedidoId) return p;
+      let feito = false;
+      return { ...p, itens: p.itens.map((it) => {
+        if (feito || it.sku !== sku || (it.cor || "") !== (corAntiga || "")) return it;
+        feito = true;
+        const prod = produtos.find((x) => x.sku === it.sku);
+        const { insumoId, consumoUn } = resolverInsumoCor(prod, novaCor, insumos);
+        return { ...it, cor: novaCor, insumoId, necessario: (consumoUn || 0) * (it.qtd || 1) };
+      }) };
+    }));
+  };
+
   const TABS = [
     { id: "dashboard", label: "Dashboard", icon: "▦" },
     { sep: "OPERAÇÃO" },
@@ -1038,10 +1054,10 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
         {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} config={config} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
         {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} config={config} />}
         {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} pedidos={pedidos} cancelarPedido={cancelarPedido} insumos={insumos} />}
-        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} insumos={insumos} cancelarPedido={cancelarPedido} />}
+        {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} insumos={insumos} cancelarPedido={cancelarPedido} mudarCorItem={mudarCorItem} pratos={pratos} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} config={config} />}
-        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} setPedidos={setPedidos} setInsumos={setInsumos} insumos={insumos} prodAvulsa={prodAvulsa} setProdAvulsa={setProdAvulsa} />}
+        {tab === "producao" && <Producao maquinas={maquinas} produtos={produtos} fila={fila} go={setTab} pratos={pratos} setPratos={setPratos} pedidos={pedidos} setPedidos={setPedidos} setInsumos={setInsumos} insumos={insumos} prodAvulsa={prodAvulsa} setProdAvulsa={setProdAvulsa} mudarCorItem={mudarCorItem} />}
         {tab === "roas" && <Roas r={r} produtos={produtos} config={config} />}
         {tab === "fin" && <Financeiro pedidos={pedidos} setPedidos={setPedidos} produtos={produtos} config={config} setConfig={setConfig} lancamentos={lancamentos} setLancamentos={setLancamentos} />}
         {tab === "kits" && <Kits produtos={produtos} config={config} />}
@@ -2065,7 +2081,7 @@ function ModalNovoPrato({ itensDisp, maquinas, onSave, onClose }) {
   );
 }
 
-function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos, setPedidos, setInsumos, insumos, prodAvulsa, setProdAvulsa }) {
+function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos, setPedidos, setInsumos, insumos, prodAvulsa, setProdAvulsa, mudarCorItem }) {
   const [aba, setAba] = React.useState("fila"); // "fila" | "pratos" | "maquinas" | "avulsa"
   const [selecionados, setSelecionados] = React.useState([]);
   const [modalPrato, setModalPrato] = React.useState(false);
@@ -2237,7 +2253,19 @@ function Producao({ maquinas, produtos, fila, go, pratos, setPratos, pedidos, se
                           <span style={{ fontFamily: "Sora", fontWeight: 800, fontSize: 16, color: C.accent }}>{it.qtd}</span>
                           <span style={{ fontSize: 11, color: C.sub }}> / {it.qtdTotal} un</span>
                         </td>
-                        <td style={{ padding: "10px 8px", color: C.sub }}>{it.cor || "—"}</td>
+                        <td style={{ padding: "10px 8px", color: C.sub }}>
+                          {(() => {
+                            const alocado = pratos.some((pr) => pr.status !== "concluido" && (pr.itens || []).some((x) => x.pedidoId === it.pedidoId && x.sku === it.sku && (x.cor || "") === (it.cor || "")));
+                            if (alocado || !mudarCorItem) return it.cor || "—";
+                            const prodIt = produtos.find((x) => x.sku === it.sku);
+                            const coresProd = (prodIt && prodIt.cores ? prodIt.cores.map((c) => c.cor).filter(Boolean) : []);
+                            const sug = [...coresProd, ...coresEmEstoque(insumos).filter((c) => !coresProd.includes(c))];
+                            const lid = `corf-${it.pedidoId}-${it.sku}`;
+                            return (<><input list={lid} value={it.cor || ""} onChange={(e) => mudarCorItem(it.pedidoId, it.sku, it.cor, e.target.value)} placeholder="cor"
+                              style={{ width: 90, background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "4px 7px", borderRadius: 6, fontSize: 12, fontFamily: "inherit" }} />
+                              <datalist id={lid}>{sug.map((c, ci) => <option key={ci} value={c} />)}</datalist></>);
+                          })()}
+                        </td>
                         <td style={{ padding: "10px 8px" }}>
                           <div style={{ fontWeight: 600 }}>{it.horasTotais.toFixed(1)}h</div>
                           <div style={{ fontSize: 11, color: C.sub }}>{it.horasImpressao}h/un</div>
@@ -2485,6 +2513,22 @@ function coresEmEstoque(insumos, material) {
     if ((i.cat === "Filamento" || i.cat === "Resina") && i.cor && (!material || i.material === material) && !set.includes(i.cor)) set.push(i.cor);
   });
   return set;
+}
+
+// Resolve, para um produto + cor escolhida, qual insumo deve ter baixa e o consumo (g) por unidade.
+// - insumo: filamento/resina do mesmo material e mesma cor; se não achar, usa o insumo padrão do produto.
+// - consumo: peso cadastrado naquela cor do produto; se não houver, usa o consumo padrão do produto.
+function resolverInsumoCor(prod, cor, insumos) {
+  if (!prod) return { insumoId: null, consumoUn: 0 };
+  const norm = (s) => (s || "").trim().toLowerCase();
+  const corEntry = (prod.cores || []).find((c) => norm(c.cor) === norm(cor));
+  const consumoUn = (corEntry && Number(corEntry.peso)) ? Number(corEntry.peso) : (prod.consumoUn || 0);
+  let insumoId = prod.insumoId || null;
+  if (cor) {
+    const match = (insumos || []).find((i) => (i.cat === "Filamento" || i.cat === "Resina") && i.material === prod.matTipo && norm(i.cor) === norm(cor));
+    if (match) insumoId = match.id;
+  }
+  return { insumoId, consumoUn };
 }
 
 // Campo de cor flexível: digita livre OU escolhe das sugestões (datalist)
@@ -2812,7 +2856,9 @@ function CondicoesModal({ cond, setCond, close }) {
 }
 
 // ---------- 4 · PEDIDOS (esteira) ----------
-function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config, insumos, cancelarPedido }) {
+function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config, insumos, cancelarPedido, mudarCorItem, pratos }) {
+  // item já alocado em algum prato não concluído? (se sim, a cor fica travada para não dessincronizar a produção)
+  const alocadoEmPrato = (pedidoId, sku, cor) => (pratos || []).some((pr) => pr.status !== "concluido" && (pr.itens || []).some((x) => x.pedidoId === pedidoId && x.sku === sku && (x.cor || "") === (cor || "")));
   // calcula os insumos que estão travando um pedido em "Aguardando insumo"
   const faltantes = (p) => {
     const agg = {};
@@ -2856,17 +2902,13 @@ function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config, insumo
         </div>
         {itens.map((it, i) => {
           const prod = produtos.find((x) => x.sku === it.sku);
-          const cores = prod && prod.cores ? prod.cores : [];
+          const coresProd = (prod && prod.cores ? prod.cores.map((c) => c.cor).filter(Boolean) : []);
+          const sug = [...coresProd, ...coresEmEstoque(insumos).filter((c) => !coresProd.includes(c))];
           return (
             <div key={i} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.8fr 0.6fr 1fr auto", gap: 10, marginBottom: 8, alignItems: "end" }}>
-              <Sel label="Produto" value={it.sku} onChange={(v) => updItem(i, { sku: v, cor: "" })} options={produtos.map((p) => p.sku)} />
+              <Sel label="Produto" value={it.sku} onChange={(v) => { const np = produtos.find((x) => x.sku === v); updItem(i, { sku: v, cor: (np && np.cores && np.cores[0]) ? np.cores[0].cor : "" }); }} options={produtos.map((p) => p.sku)} />
               <F label="Qtd" value={it.qtd} onChange={(v) => updItem(i, { qtd: v })} />
-              {cores.length ? (
-                <label style={{ display: "block" }}><div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
-                  <select value={it.cor} onChange={(e) => updItem(i, { cor: e.target.value })} style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
-                    <option value="">— cor —</option>{cores.map((c, ci) => <option key={ci} value={c.cor}>{c.cor}</option>)}
-                  </select></label>
-              ) : <div style={{ fontSize: 11, color: C.sub, paddingBottom: 10 }}>sem cores</div>}
+              <CorInput value={it.cor} onChange={(v) => updItem(i, { cor: v })} sugestoes={sug} />
               <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delItem(i)}>✕</MiniBtn></div>
             </div>
           );
@@ -2893,12 +2935,26 @@ function Pedidos({ pedidos, fila, avancar, produtos, criarPedido, config, insumo
                   <PrioTag p={p.prioridade} />
                 </div>
                 <div style={{ fontSize: 11, color: C.sub, marginBottom: 6 }}>{p.cliente} · {p.origem}</div>
-                {(p.itens || []).map((it, i) => (
-                  <div key={i} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-                    <span>{it.produto} {it.cor ? <span style={{ color: C.sub }}>({it.cor})</span> : ""} ×{it.qtd}</span>
-                    <span style={{ color: C.sub }}>{brl(it.preco * it.qtd)}</span>
-                  </div>
-                ))}
+                {(p.itens || []).map((it, i) => {
+                  const prodIt = produtos.find((x) => x.sku === it.sku);
+                  const coresProd = (prodIt && prodIt.cores ? prodIt.cores.map((c) => c.cor).filter(Boolean) : []);
+                  const sug = [...coresProd, ...coresEmEstoque(insumos).filter((c) => !coresProd.includes(c))];
+                  const editavel = (p.etapa === "Aguardando insumo" || p.etapa === "Produzir") && !alocadoEmPrato(p.id, it.sku, it.cor);
+                  const listId = `corp-${p.id}-${i}`;
+                  return (
+                    <div key={i} style={{ fontSize: 12, padding: "2px 0" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>{it.produto} ×{it.qtd}</span>
+                        <span style={{ color: C.sub }}>{brl(it.preco * it.qtd)}</span>
+                      </div>
+                      {editavel ? (
+                        <input list={listId} value={it.cor || ""} onChange={(e) => mudarCorItem(p.id, it.sku, it.cor, e.target.value)} placeholder="cor"
+                          style={{ width: "100%", marginTop: 3, background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "4px 7px", borderRadius: 6, fontSize: 11, fontFamily: "inherit" }} />
+                      ) : (it.cor ? <div style={{ color: C.sub, fontSize: 11 }}>Cor: {it.cor}</div> : null)}
+                      {editavel && <datalist id={listId}>{sug.map((c, ci) => <option key={ci} value={c} />)}</datalist>}
+                    </div>
+                  );
+                })}
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, borderTop: `1px solid ${C.line}`, marginTop: 4, paddingTop: 4 }}>
                   <span>Total</span><span>{brl(totalPed(p))}</span>
                 </div>
