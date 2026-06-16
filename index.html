@@ -1037,7 +1037,7 @@ function App({ userKey = "default", onLogout, userEmailDireto = "" }) {
         {tab === "dashboard" && <Dashboard pedidos={pedidos} fila={fila} produtos={produtos} insumos={insumos} itensBaixos={itensBaixos} go={setTab} maquinas={maquinas} pratos={pratos} config={config} />}
         {tab === "calc" && <Calculadora input={input} set={set} setInput={setInput} r={r} insumos={insumos} maquinas={maquinas} config={config} salvarNoCatalogo={salvarNoCatalogo} gerarOrcamento={gerarOrcamento} go={setTab} />}
         {tab === "catalogo" && <Catalogo produtos={produtos} setProdutos={setProdutos} criarPedido={criarPedido} setInput={setInput} go={setTab} insumos={insumos} config={config} />}
-        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} pedidos={pedidos} cancelarPedido={cancelarPedido} />}
+        {tab === "orcamentos" && <Orcamentos orcamentos={orcamentos} setOrcamentos={setOrcamentos} aprovar={aprovarOrcamento} produtos={produtos} cond={cond} setCond={setCond} config={config} pedidos={pedidos} cancelarPedido={cancelarPedido} insumos={insumos} />}
         {tab === "pedidos" && <Pedidos pedidos={pedidos} fila={fila} avancar={avancar} produtos={produtos} criarPedido={criarPedido} config={config} insumos={insumos} cancelarPedido={cancelarPedido} />}
         {tab === "estoque" && <Insumos insumos={insumos} setInsumos={setInsumos} />}
         {tab === "maquinas" && <Maquinas maquinas={maquinas} setMaquinas={setMaquinas} config={config} />}
@@ -1328,8 +1328,9 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, config, salva
   const passos = ["Identificação", "Material", "Operacional", "Mão de obra", "Acessórios", "Despacho", "Resumo"];
   const acessInsumo = insumos.filter((i) => i.cat === "Acessório");
   const embInsumo = insumos.filter((i) => i.cat === "Embalagem");
-  // cores disponíveis no estoque para o tipo de material selecionado
+  // cores disponíveis no estoque para o tipo de material selecionado (sugestões do campo de cor)
   const coresMaterial = insumos.filter((i) => (i.cat === "Filamento" || i.cat === "Resina") && i.material === input.matTipo && i.cor);
+  const sugCores = [...coresEmEstoque(insumos, input.matTipo), ...coresEmEstoque(insumos).filter((c) => !coresEmEstoque(insumos, input.matTipo).includes(c))];
 
   // helpers de lista (acessórios / despacho)
   const addItem = (campo, item) => setInput((s) => ({ ...s, [campo]: [...(s[campo] || []), item] }));
@@ -1391,23 +1392,15 @@ function Calculadora({ input, set, setInput, r, insumos, maquinas, config, salva
               {input.coresAtivo && (<div style={{ marginTop: 10 }}>
                 {(input.cores || []).map((c, idx) => (
                   <div key={idx} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.4fr 0.9fr auto", gap: 10, marginBottom: 8, alignItems: "end" }}>
-                    <label style={{ display: "block" }}>
-                      <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
-                      <select value={c.cor} onChange={(e) => updItem("cores", idx, { cor: e.target.value })}
-                        style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
-                        <option value="">— selecione —</option>
-                        {coresMaterial.map((i) => <option key={i.id} value={i.cor}>{i.cor}</option>)}
-                      </select>
-                    </label>
+                    <CorInput value={c.cor} onChange={(v) => updItem("cores", idx, { cor: v })} sugestoes={sugCores} />
                     <F label="Peso (g)" value={c.peso} onChange={(v) => updItem("cores", idx, { peso: v })} />
                     <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delItem("cores", idx)}>✕</MiniBtn></div>
                   </div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-                  <Btn small ghost onClick={() => addItem("cores", { cor: coresMaterial[0] ? coresMaterial[0].cor : "", peso: input.consumo })}>＋ Adicionar cor</Btn>
+                  <Btn small ghost onClick={() => addItem("cores", { cor: "", peso: input.consumo })}>＋ Adicionar cor</Btn>
                   <span style={{ fontSize: 13, color: C.sub }}>Peso total: <b style={{ color: C.ink }}>{round2(r.pesoPeca)} g</b></span>
                 </div>
-                {!coresMaterial.length && <Hint>Nenhuma cor de {input.matTipo} cadastrada nos insumos. <a onClick={() => go("estoque")} style={{ color: C.accent, cursor: "pointer" }}>Cadastrar insumo →</a></Hint>}
                 <Hint>O peso da peça passa a ser a soma das cores. A cor não muda o preço — preço único por produto.</Hint>
               </div>)}
             </div>
@@ -2485,6 +2478,28 @@ function Catalogo({ produtos, setProdutos, criarPedido, setInput, go, insumos, c
   );
 }
 
+// Lista de cores distintas de filamento/resina em estoque (todas, ou só de um material)
+function coresEmEstoque(insumos, material) {
+  const set = [];
+  (insumos || []).forEach((i) => {
+    if ((i.cat === "Filamento" || i.cat === "Resina") && i.cor && (!material || i.material === material) && !set.includes(i.cor)) set.push(i.cor);
+  });
+  return set;
+}
+
+// Campo de cor flexível: digita livre OU escolhe das sugestões (datalist)
+function CorInput({ value, onChange, sugestoes, label }) {
+  const id = React.useMemo(() => "cores-" + Math.random().toString(36).slice(2), []);
+  return (
+    <label style={{ display: "block" }}>
+      <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>{label || "Cor"}</div>
+      <input list={id} value={value || ""} onChange={(e) => onChange(e.target.value)} placeholder="Cor do filamento"
+        style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
+      <datalist id={id}>{(sugestoes || []).map((c, i) => <option key={i} value={c} />)}</datalist>
+    </label>
+  );
+}
+
 // Modal de edição de produto com re-simulação por canal + cores
 function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, config }) {
   const set = (k, v) => setProd((s) => ({ ...s, [k]: v }));
@@ -2500,9 +2515,10 @@ function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, con
   const statusCor = preco >= ref.precoSaudavel ? C.good : preco >= ref.precoMinimo ? C.warn : C.bad;
   const statusTxt = preco >= ref.precoSaudavel ? "Saudável" : preco >= ref.precoMinimo ? "Apertado" : "Inviável";
   // cores disponíveis para o tipo de material do produto
-  const coresMaterial = (insumos || []).filter((i) => (i.cat === "Filamento" || i.cat === "Resina") && i.material === prod.matTipo && i.cor);
+  const coresMaterial = coresEmEstoque(insumos, prod.matTipo);
+  const sugCores = [...coresMaterial, ...coresEmEstoque(insumos).filter((c) => !coresMaterial.includes(c))];
   const pesoTotal = (prod.cores || []).reduce((a, c) => a + (Number(c.peso) || 0), 0);
-  const addCor = () => set("cores", [...(prod.cores || []), { cor: coresMaterial[0] ? coresMaterial[0].cor : "", peso: prod.consumoUn || 0 }]);
+  const addCor = () => set("cores", [...(prod.cores || []), { cor: "", peso: prod.consumoUn || 0 }]);
   const updCor = (i, patch) => set("cores", prod.cores.map((c, idx) => idx === i ? { ...c, ...patch } : c));
   const delCor = (i) => set("cores", prod.cores.filter((_, idx) => idx !== i));
   return (
@@ -2550,15 +2566,7 @@ function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, con
         <div style={{ marginTop: 16 }}><Label>Cores e peso específico</Label></div>
         {(prod.cores || []).map((c, i) => (
           <div key={i} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.4fr 0.9fr auto", gap: 10, marginBottom: 8, alignItems: "end" }}>
-            <label style={{ display: "block" }}>
-              <div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
-              <select value={c.cor} onChange={(e) => updCor(i, { cor: e.target.value })}
-                style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
-                <option value="">— selecione —</option>
-                {coresMaterial.map((ins) => <option key={ins.id} value={ins.cor}>{ins.cor}</option>)}
-                {c.cor && !coresMaterial.some((ins) => ins.cor === c.cor) && <option value={c.cor}>{c.cor}</option>}
-              </select>
-            </label>
+            <CorInput value={c.cor} onChange={(v) => updCor(i, { cor: v })} sugestoes={sugCores} />
             <F label="Peso (g)" value={c.peso} onChange={(v) => updCor(i, { peso: v })} />
             <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delCor(i)}>✕</MiniBtn></div>
           </div>
@@ -2567,7 +2575,7 @@ function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, con
           <Btn small ghost onClick={addCor}>＋ Adicionar cor</Btn>
           {(prod.cores && prod.cores.length > 0) && <span style={{ fontSize: 13, color: C.sub }}>Peso total: <b style={{ color: C.ink }}>{round2(pesoTotal)} g</b></span>}
         </div>
-        {!coresMaterial.length && <Hint>Nenhuma cor de {prod.matTipo || "material"} cadastrada nos insumos.</Hint>}
+        <Hint>Digite a cor livremente ou escolha uma das cadastradas no estoque. A cor não altera o preço — o preço é único por produto.</Hint>
 
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, gap: 8 }}>
           <Btn ghost onClick={onRemover}>Excluir produto</Btn>
@@ -2582,7 +2590,7 @@ function EditarProduto({ prod, setProd, onSalvar, onRemover, close, insumos, con
 }
 
 // ---------- 3 · ORÇAMENTOS ----------
-function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond, config, pedidos, cancelarPedido }) {
+function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCond, config, pedidos, cancelarPedido, insumos }) {
   const [edit, setEdit] = React.useState(null);
   const [verCond, setVerCond] = React.useState(false);
   const [aprovando, setAprovando] = React.useState(null);
@@ -2634,7 +2642,7 @@ function Orcamentos({ orcamentos, setOrcamentos, aprovar, produtos, cond, setCon
           </div>
         </Card>
       ))}
-      {edit && <EditarOrcamento orc={edit} setOrc={setEdit} produtos={produtos} onSalvar={salvar} onExcluir={() => excluir(edit.id)} close={() => setEdit(null)} />}
+      {edit && <EditarOrcamento orc={edit} setOrc={setEdit} produtos={produtos} insumos={insumos} onSalvar={salvar} onExcluir={() => excluir(edit.id)} close={() => setEdit(null)} />}
       {verCond && <CondicoesModal cond={cond} setCond={setCond} close={() => setVerCond(false)} />}
       {aprovando && <ModalAprovarOrcamento orc={aprovando} config={config} close={() => setAprovando(null)}
         onConfirm={(pgto) => { aprovar(aprovando, pgto); setAprovando(null); }} />}
@@ -2699,12 +2707,14 @@ function ModalAprovarOrcamento({ orc, config, onConfirm, close }) {
   );
 }
 
-function EditarOrcamento({ orc, setOrc, produtos, onSalvar, onExcluir, close }) {
+function EditarOrcamento({ orc, setOrc, produtos, insumos, onSalvar, onExcluir, close }) {
   const set = (k, v) => setOrc((s) => ({ ...s, [k]: v }));
-  const addItem = () => { const p = produtos[0]; setOrc((s) => ({ ...s, itens: [...s.itens, { sku: p ? p.sku : "", nome: p ? p.nome : "", qtd: 1, cor: "", preco: p ? (p.precoPraticado || p.precoSaudavel) : 0 }] })); };
+  const corPadrao = (p) => (p && p.cores && p.cores[0]) ? p.cores[0].cor : "";
+  const estoqueCores = coresEmEstoque(insumos);
+  const addItem = () => { const p = produtos[0]; setOrc((s) => ({ ...s, itens: [...s.itens, { sku: p ? p.sku : "", nome: p ? p.nome : "", qtd: 1, cor: corPadrao(p), preco: p ? (p.precoPraticado || p.precoSaudavel) : 0 }] })); };
   const updItem = (i, patch) => setOrc((s) => ({ ...s, itens: s.itens.map((x, idx) => idx === i ? { ...x, ...patch } : x) }));
   const delItem = (i) => setOrc((s) => ({ ...s, itens: s.itens.filter((_, idx) => idx !== i) }));
-  const pickProduto = (i, sku) => { const p = produtos.find((x) => x.sku === sku); updItem(i, { sku, nome: p ? p.nome : "", preco: p ? (p.precoPraticado || p.precoSaudavel) : 0, cor: "" }); };
+  const pickProduto = (i, sku) => { const p = produtos.find((x) => x.sku === sku); updItem(i, { sku, nome: p ? p.nome : "", preco: p ? (p.precoPraticado || p.precoSaudavel) : 0, cor: corPadrao(p) }); };
   const t = calcTotalOrc(orc);
   const total = t.total;
   return (
@@ -2720,17 +2730,13 @@ function EditarOrcamento({ orc, setOrc, produtos, onSalvar, onExcluir, close }) 
         <div style={{ marginTop: 12 }}><Label>Itens</Label></div>
         {orc.itens.map((it, i) => {
           const prod = produtos.find((x) => x.sku === it.sku);
-          const cores = prod && prod.cores ? prod.cores : [];
+          const coresProd = (prod && prod.cores ? prod.cores.map((c) => c.cor).filter(Boolean) : []);
+          const sugCores = [...coresProd, ...estoqueCores.filter((c) => !coresProd.includes(c))];
           return (
             <div key={i} className="grid-item" style={{ display: "grid", gridTemplateColumns: "1.6fr 0.5fr 0.9fr 0.9fr auto", gap: 8, marginBottom: 8, alignItems: "end" }}>
               <Sel label="Produto" value={it.sku} onChange={(v) => pickProduto(i, v)} options={produtos.map((p) => p.sku)} />
               <F label="Qtd" value={it.qtd} onChange={(v) => updItem(i, { qtd: v })} />
-              {cores.length ? (
-                <label style={{ display: "block" }}><div style={{ fontSize: 12, color: C.sub, marginBottom: 4 }}>Cor</div>
-                  <select value={it.cor} onChange={(e) => updItem(i, { cor: e.target.value })} style={{ width: "100%", background: C.bg, border: `1px solid ${C.line}`, color: C.ink, padding: "8px 10px", borderRadius: 8, fontSize: 13, fontFamily: "inherit" }}>
-                    <option value="">—</option>{cores.map((c, ci) => <option key={ci} value={c.cor}>{c.cor}</option>)}
-                  </select></label>
-              ) : <div />}
+              <CorInput value={it.cor} onChange={(v) => updItem(i, { cor: v })} sugestoes={sugCores} />
               <F label="Preço un." value={it.preco} step={0.1} onChange={(v) => updItem(i, { preco: v })} suffix="R$" />
               <div style={{ paddingBottom: 8 }}><MiniBtn onClick={() => delItem(i)}>✕</MiniBtn></div>
             </div>
